@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model UserProfile {
+  id                 Int      @id
+  fullName           String?
+  email              String?
+  phone              String?
+  resumeText         String?
+  desiredRole        String?
+  preferredLocations String?
+  preferredSalaryMin Int?
+  remotePreference   String   @default("hybrid")
+  visaStatus         String?
+  yearsExperience    Int?
+  linkedInUrl        String?
+  githubUrl          String?
+  portfolioUrl       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model JobPosting {
+  id          Int          @id @default(autoincrement())
+  externalId  String       @unique
+  title       String
+  company     String
+  location    String
+  isRemote    Boolean      @default(false)
+  salaryMin   Int?
+  salaryMax   Int?
+  url         String
+  summary     String
+  source      String       @default("mock")
+  createdAt   DateTime     @default(now())
+  decisions   JobDecision[]
+  application Application?
+}
+
+model JobDecision {
+  id        Int          @id @default(autoincrement())
+  jobId      Int          @unique
+  decision   String
+  reason     String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  job        JobPosting   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model Application {
+  id             Int               @id @default(autoincrement())
+  jobId           Int               @unique
+  status          String            @default("SUBMITTED")
+  tailoredResume  String
+  coverLetter     String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  job             JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
