@@ -27,6 +27,7 @@ export async function GET() {
         .split(",")
         .map((entry) => entry.trim())
         .filter(Boolean),
+      seniorityPreference: profile.seniorityPreference,
       preferredLocations: (profile.preferredLocations ?? "")
         .split(",")
         .map((entry) => entry.trim())
@@ -52,6 +53,7 @@ export async function PUT(req: Request) {
     phone?: string;
     resumeText?: string;
     desiredRole?: string;
+    seniorityPreference?: string;
     preferredLocations?: string;
     preferredSalaryMin?: number;
     remotePreference?: string;
@@ -69,6 +71,7 @@ export async function PUT(req: Request) {
     phone: payload.phone,
     resumeText: payload.resumeText,
     desiredRole: (payload.desiredRoles ?? []).join(", "),
+    seniorityPreference: payload.seniorityPreference ?? "any",
     preferredLocations: (payload.preferredLocations ?? []).join(", "),
     preferredSalaryMin: payload.preferredSalaryMin,
     remotePreference: payload.remotePreference ?? "hybrid",
@@ -117,6 +120,7 @@ export async function PUT(req: Request) {
         .split(",")
         .map((entry) => entry.trim())
         .filter(Boolean),
+      seniorityPreference: profile.seniorityPreference,
       preferredLocations: (profile.preferredLocations ?? "")
         .split(",")
         .map((entry) => entry.trim())

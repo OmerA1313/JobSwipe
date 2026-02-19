@@ -7,6 +7,7 @@ export type ProfilePayload = {
   resumeFileMimeType?: string;
   resumeFileBase64?: string;
   desiredRoles?: string[];
+  seniorityPreference?: "any" | "intern" | "junior" | "mid" | "senior" | "lead";
   preferredLocations?: string[];
   preferredSalaryMin?: number;
   remotePreference?: "remote" | "hybrid" | "onsite";

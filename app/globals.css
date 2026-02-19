@@ -102,6 +102,39 @@ textarea {
   flex-wrap: wrap;
 }
 
+.chip-input {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0f172a;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+}
+
+.chip button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: #475569;
+  line-height: 1;
+  font-size: 0.75rem;
+}
+
 button {
   border: 0;
   border-radius: 999px;
@@ -138,6 +171,33 @@ button.danger {
   border-radius: 20px;
   background: linear-gradient(145deg, #f9f4ea, #eee6d8);
   border: 1px solid #d2c5ae;
+}
+
+.feed-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.feed-tools-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.feed-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: #334155;
+}
+
+.feed-toggle input {
+  width: auto;
 }
 
 .swipe-deck {
@@ -180,6 +240,22 @@ button.danger {
 .swipe-meta {
   display: flex;
   justify-content: space-between;
+}
+
+.pass-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pass-tag {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #1e293b;
+  font-size: 0.73rem;
+  padding: 3px 8px;
 }
 
 .swipe-indicators {
@@ -261,5 +337,14 @@ button.danger {
 
   .swipe-actions {
     grid-template-columns: 1fr;
+  }
+
+  .feed-tools {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .feed-tools-actions {
+    width: 100%;
   }
 }

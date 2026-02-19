@@ -17,6 +17,7 @@ model UserProfile {
   resumeFileMimeType String?
   resumeFileData     Bytes?
   desiredRole        String?
+  seniorityPreference String   @default("any")
   preferredLocations String?
   preferredSalaryMin Int?
   remotePreference   String   @default("hybrid")

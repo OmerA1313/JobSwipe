@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureBootstrap } from "@/lib/bootstrap";
-import { scoreJob } from "@/lib/matching";
+import { rankJobsForFeed } from "@/lib/matching";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: Request) {
   await ensureBootstrap();
+  const { searchParams } = new URL(req.url);
+  const strictLocation = searchParams.get("strictLocation") !== "0";
+  const strictRole = searchParams.get("strictRole") !== "0";
 
   const [profile, jobs] = await Promise.all([
     prisma.userProfile.findUniqueOrThrow({ where: { id: 1 } }),
@@ -22,22 +25,11 @@ export async function GET() {
     return decision.decision !== "SKIP" && decision.decision !== "NOT_FIT" && decision.decision !== "APPLIED";
   });
 
-  const ranked = pending
-    .map((job) => {
-      const match = scoreJob(profile, job);
-      return {
-        id: job.id,
-        title: job.title,
-        company: job.company,
-        location: job.location,
-        isRemote: job.isRemote,
-        summary: job.summary,
-        url: job.url,
-        score: match.score,
-        whyMatched: match.reasons
-      };
-    })
-    .sort((a, b) => b.score - a.score);
+  const ranked = rankJobsForFeed(profile, pending, { strictLocation, strictRole });
 
-  return NextResponse.json({ jobs: ranked });
+  return NextResponse.json({
+    jobs: ranked,
+    strictLocation,
+    strictRole
+  });
 }

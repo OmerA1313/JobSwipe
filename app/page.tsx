@@ -11,6 +11,7 @@ type Profile = {
   resumeFileMimeType?: string;
   hasResumeFile?: boolean;
   desiredRoles?: string[];
+  seniorityPreference?: "any" | "intern" | "junior" | "mid" | "senior" | "lead";
   preferredLocations?: string[];
   preferredSalaryMin?: number;
   remotePreference?: "remote" | "hybrid" | "onsite";
@@ -33,10 +34,17 @@ type FeedJob = {
   company: string;
   location: string;
   isRemote: boolean;
+  source?: string;
   summary: string;
   url: string;
   score: number;
   whyMatched: string[];
+  passSignals?: {
+    role?: string;
+    location?: string;
+    seniority?: string;
+    remote?: string;
+  };
 };
 
 type ApplicationItem = {
@@ -69,6 +77,7 @@ export default function HomePage() {
   const [activeTab, setActiveTab] = useState<"preferences" | "feed" | "tracking">("feed");
   const [profile, setProfile] = useState<Profile>({
     remotePreference: "hybrid",
+    seniorityPreference: "any",
     preferredLocations: [],
     desiredRoles: []
   });
@@ -83,11 +92,19 @@ export default function HomePage() {
   const [dragPointerId, setDragPointerId] = useState<number | null>(null);
   const [exitSwipe, setExitSwipe] = useState<SwipeDirection | null>(null);
   const [isSubmittingSwipe, setIsSubmittingSwipe] = useState(false);
+  const [isRefreshingJobs, setIsRefreshingJobs] = useState(false);
+  const [isResettingQueue, setIsResettingQueue] = useState(false);
+  const [desiredRoleDraft, setDesiredRoleDraft] = useState("");
+  const [preferredLocationDraft, setPreferredLocationDraft] = useState("");
+  const [strictLocation, setStrictLocation] = useState(true);
+  const [strictRole, setStrictRole] = useState(true);
 
   async function loadAll() {
     const [pRes, fRes, aRes] = await Promise.all([
       fetch("/api/profile", { cache: "no-store" }),
-      fetch("/api/jobs/feed", { cache: "no-store" }),
+      fetch(`/api/jobs/feed?strictLocation=${strictLocation ? "1" : "0"}&strictRole=${strictRole ? "1" : "0"}`, {
+        cache: "no-store"
+      }),
       fetch("/api/applications", { cache: "no-store" })
     ]);
 
@@ -109,10 +126,60 @@ export default function HomePage() {
 
   useEffect(() => {
     loadAll().catch((error) => setStatus(error.message));
-  }, []);
+  }, [strictLocation, strictRole]);
 
   const topJob = useMemo(() => feed[0], [feed]);
   const queuedJobs = useMemo(() => feed.slice(1, 3), [feed]);
+
+  function updateDesiredRoles(nextRoles: string[]) {
+    const deduped = Array.from(
+      new Set(
+        nextRoles
+          .map((role) => role.trim())
+          .filter(Boolean)
+      )
+    );
+    setProfile((prev) => ({ ...prev, desiredRoles: deduped }));
+  }
+
+  function addDesiredRoleFromDraft() {
+    const pieces = desiredRoleDraft
+      .split(",")
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    if (pieces.length === 0) return;
+    updateDesiredRoles([...(profile.desiredRoles ?? []), ...pieces]);
+    setDesiredRoleDraft("");
+  }
+
+  function removeDesiredRole(role: string) {
+    updateDesiredRoles((profile.desiredRoles ?? []).filter((entry) => entry !== role));
+  }
+
+  function updatePreferredLocations(nextLocations: string[]) {
+    const deduped = Array.from(
+      new Set(
+        nextLocations
+          .map((location) => location.trim())
+          .filter(Boolean)
+      )
+    );
+    setProfile((prev) => ({ ...prev, preferredLocations: deduped }));
+  }
+
+  function addPreferredLocationFromDraft() {
+    const pieces = preferredLocationDraft
+      .split(",")
+      .map((piece) => piece.trim())
+      .filter(Boolean);
+    if (pieces.length === 0) return;
+    updatePreferredLocations([...(profile.preferredLocations ?? []), ...pieces]);
+    setPreferredLocationDraft("");
+  }
+
+  function removePreferredLocation(location: string) {
+    updatePreferredLocations((profile.preferredLocations ?? []).filter((entry) => entry !== location));
+  }
 
   async function handleResumeFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -178,8 +245,29 @@ export default function HomePage() {
 
   async function saveProfile() {
     setStatus("Saving profile...");
+    const draftRoles = desiredRoleDraft
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const draftLocations = preferredLocationDraft
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    const mergedDesiredRoles = Array.from(new Set([...(profile.desiredRoles ?? []), ...draftRoles]));
+    const mergedPreferredLocations = Array.from(new Set([...(profile.preferredLocations ?? []), ...draftLocations]));
+    if (draftRoles.length > 0) {
+      setDesiredRoleDraft("");
+      setProfile((prev) => ({ ...prev, desiredRoles: mergedDesiredRoles }));
+    }
+    if (draftLocations.length > 0) {
+      setPreferredLocationDraft("");
+      setProfile((prev) => ({ ...prev, preferredLocations: mergedPreferredLocations }));
+    }
+
     const payload = {
       ...profile,
+      desiredRoles: mergedDesiredRoles,
+      preferredLocations: mergedPreferredLocations,
       preferredSalaryMin: profile.preferredSalaryMin ? Number(profile.preferredSalaryMin) : undefined,
       yearsExperience: profile.yearsExperience ? Number(profile.yearsExperience) : undefined,
       resumeFileName: pendingResumeUpload?.fileName,
@@ -242,6 +330,70 @@ export default function HomePage() {
     await loadAll();
     setStatus("Application submitted with attached PDF resume + generated cover letter");
     return true;
+  }
+
+  async function refreshJobs() {
+    if (isRefreshingJobs) return;
+
+    setIsRefreshingJobs(true);
+    setStatus("Fetching latest jobs from external APIs...");
+
+    try {
+      const res = await fetch("/api/jobs/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const payload = (await res.json()) as {
+        message?: string;
+        fetched?: number;
+        sourcesUsed?: string[];
+        errors?: string[];
+        sourceCounts?: Record<string, number>;
+      };
+
+      if (!res.ok) {
+        setStatus(payload.message || "Failed to refresh jobs");
+        return;
+      }
+
+      await loadAll();
+
+      const fetched = typeof payload.fetched === "number" ? payload.fetched : 0;
+      const sourcesUsed = Array.isArray(payload.sourcesUsed) ? payload.sourcesUsed.join(", ") : "external APIs";
+      if (fetched > 0) {
+        setStatus(payload.message || `Fetched ${fetched} jobs from ${sourcesUsed}.`);
+      } else {
+        setStatus(payload.message || "No new jobs were loaded.");
+      }
+    } catch {
+      setStatus("Failed to refresh jobs");
+    } finally {
+      setIsRefreshingJobs(false);
+    }
+  }
+
+  async function resetQueue() {
+    if (isResettingQueue) return;
+
+    setIsResettingQueue(true);
+    setStatus("Resetting skipped cards...");
+    try {
+      const res = await fetch("/api/jobs/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const payload = (await res.json()) as { message?: string };
+      if (!res.ok) {
+        setStatus(payload.message || "Failed to reset queue");
+        return;
+      }
+      await loadAll();
+      setStatus(payload.message || "Queue reset");
+    } catch {
+      setStatus("Failed to reset queue");
+    } finally {
+      setIsResettingQueue(false);
+    }
   }
 
   async function triggerSwipe(direction: SwipeDirection) {
@@ -373,34 +525,90 @@ export default function HomePage() {
               />
             </label>
             <label>
-              Desired roles (comma separated)
-              <input
-                value={(profile.desiredRoles ?? []).join(", ")}
-                onChange={(event) =>
-                  setProfile((prev) => ({
-                    ...prev,
-                    desiredRoles: event.target.value
-                      .split(",")
-                      .map((entry) => entry.trim())
-                      .filter(Boolean)
-                  }))
-                }
-              />
+              Desired roles
+              <div className="chip-input">
+                <input
+                  value={desiredRoleDraft}
+                  placeholder="Add role (e.g. Junior Software Developer)"
+                  onChange={(event) => setDesiredRoleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === ",") {
+                      event.preventDefault();
+                      addDesiredRoleFromDraft();
+                    }
+                  }}
+                />
+                <button type="button" onClick={addDesiredRoleFromDraft}>
+                  Add
+                </button>
+              </div>
+              <div className="chip-list">
+                {(profile.desiredRoles ?? []).map((role) => (
+                  <span className="chip" key={role}>
+                    {role}
+                    <button type="button" onClick={() => removeDesiredRole(role)} aria-label={`Remove ${role}`}>
+                      x
+                    </button>
+                  </span>
+                ))}
+                {(profile.desiredRoles ?? []).length === 0 ? <span className="small">No roles added yet</span> : null}
+              </div>
             </label>
             <label>
-              Preferred locations (comma separated)
-              <input
-                value={(profile.preferredLocations ?? []).join(", ")}
+              Seniority preference
+              <select
+                value={profile.seniorityPreference ?? "any"}
                 onChange={(event) =>
                   setProfile((prev) => ({
                     ...prev,
-                    preferredLocations: event.target.value
-                      .split(",")
-                      .map((entry) => entry.trim())
-                      .filter(Boolean)
+                    seniorityPreference: event.target.value as "any" | "intern" | "junior" | "mid" | "senior" | "lead"
                   }))
                 }
-              />
+              >
+                <option value="any">Any level</option>
+                <option value="intern">Intern</option>
+                <option value="junior">Junior</option>
+                <option value="mid">Mid-level</option>
+                <option value="senior">Senior</option>
+                <option value="lead">Lead / Principal / Manager</option>
+              </select>
+              <span className="small">Use this to focus the feed on your target seniority.</span>
+            </label>
+            <label>
+              Preferred locations
+              <div className="chip-input">
+                <input
+                  value={preferredLocationDraft}
+                  placeholder="Add location (e.g. Israel, Tel Aviv)"
+                  onChange={(event) => setPreferredLocationDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === ",") {
+                      event.preventDefault();
+                      addPreferredLocationFromDraft();
+                    }
+                  }}
+                />
+                <button type="button" onClick={addPreferredLocationFromDraft}>
+                  Add
+                </button>
+              </div>
+              <div className="chip-list">
+                {(profile.preferredLocations ?? []).map((location) => (
+                  <span className="chip" key={location}>
+                    {location}
+                    <button
+                      type="button"
+                      onClick={() => removePreferredLocation(location)}
+                      aria-label={`Remove ${location}`}
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+                {(profile.preferredLocations ?? []).length === 0 ? (
+                  <span className="small">No locations added yet</span>
+                ) : null}
+              </div>
             </label>
             <label>
               Minimum salary (USD)
@@ -423,10 +631,11 @@ export default function HomePage() {
                   }))
                 }
               >
-                <option value="remote">Remote</option>
-                <option value="hybrid">Hybrid</option>
-                <option value="onsite">On-site</option>
+                <option value="remote">Remote only</option>
+                <option value="hybrid">Include remote + on-site</option>
+                <option value="onsite">On-site only (no remote)</option>
               </select>
+              <span className="small">Use this to include/exclude remote jobs from your feed.</span>
             </label>
           </div>
 
@@ -454,6 +663,29 @@ export default function HomePage() {
 
       {activeTab === "feed" ? (
         <section className="swipe-board">
+          <div className="feed-tools">
+            <div className="feed-tools-actions">
+              <button onClick={refreshJobs} disabled={isRefreshingJobs}>
+                {isRefreshingJobs ? "Refreshing..." : "Refresh real jobs"}
+              </button>
+              <button onClick={resetQueue} disabled={isResettingQueue}>
+                {isResettingQueue ? "Resetting..." : "Reset skipped cards"}
+              </button>
+              <label className="feed-toggle">
+                <input type="checkbox" checked={strictRole} onChange={(event) => setStrictRole(event.target.checked)} />
+                <span>Strict role match</span>
+              </label>
+              <label className="feed-toggle">
+                <input
+                  type="checkbox"
+                  checked={strictLocation}
+                  onChange={(event) => setStrictLocation(event.target.checked)}
+                />
+                <span>Only show preferred locations</span>
+              </label>
+            </div>
+            <span className="small">Turn off to allow out-of-location fallback jobs.</span>
+          </div>
           {topJob ? (
             <>
               <div className="swipe-deck">
@@ -473,7 +705,7 @@ export default function HomePage() {
                     >
                       <div className="swipe-meta">
                         <span className="small">up next</span>
-                        <span className="small">score {job.score}</span>
+                        <span className="small">score {job.score} • {job.source ?? "local"}</span>
                       </div>
                       <h2>{job.title}</h2>
                       <p className="small">
@@ -501,7 +733,19 @@ export default function HomePage() {
                 </div>
                 <div className="swipe-meta">
                   <span className="small">job {1} of {feed.length}</span>
-                  <span className="small">score {topJob.score}</span>
+                  <span className="small">score {topJob.score} • {topJob.source ?? "local"}</span>
+                </div>
+                <div className="pass-tags">
+                  {topJob.passSignals?.role ? <span className="pass-tag">Role: {topJob.passSignals.role}</span> : null}
+                  {topJob.passSignals?.seniority ? (
+                    <span className="pass-tag">Level: {topJob.passSignals.seniority}</span>
+                  ) : null}
+                  {topJob.passSignals?.location ? (
+                    <span className="pass-tag">Location: {topJob.passSignals.location}</span>
+                  ) : null}
+                  {topJob.passSignals?.remote ? (
+                    <span className="pass-tag">Mode: {topJob.passSignals.remote}</span>
+                  ) : null}
                 </div>
                 <h2>{topJob.title}</h2>
                 <p className="small">
@@ -548,7 +792,11 @@ export default function HomePage() {
           ) : (
             <div className="card">
               <h2>Queue complete</h2>
-              <p className="small">No pending jobs right now. Try updating preferences or seeding more jobs.</p>
+              <p className="small">
+                {strictLocation
+                  ? "No jobs matched your preferred locations. Try Refresh real jobs or disable 'Only show preferred locations'."
+                  : "No pending jobs right now. Try updating preferences or refreshing jobs."}
+              </p>
             </div>
           )}
         </section>
