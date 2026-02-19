@@ -4,10 +4,14 @@ export function scoreJob(profile: UserProfile, job: JobPosting) {
   let score = 0;
   const reasons: string[] = [];
 
-  const desiredRole = (profile.desiredRole ?? "").trim().toLowerCase();
-  if (desiredRole && job.title.toLowerCase().includes(desiredRole)) {
+  const desiredRoles = (profile.desiredRole ?? "")
+    .split(",")
+    .map((role) => role.trim())
+    .filter(Boolean);
+  const matchedRole = desiredRoles.find((role) => job.title.toLowerCase().includes(role.toLowerCase()));
+  if (matchedRole) {
     score += 45;
-    reasons.push(`Title matches desired role: ${profile.desiredRole}`);
+    reasons.push(`Title matches desired role: ${matchedRole}`);
   }
 
   const locations = (profile.preferredLocations ?? "")

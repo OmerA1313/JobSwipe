@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev",
+    "dev:restart": "pkill -f \"node node_modules/next/dist/bin/next dev\" || true; npm run dev",
     "build": "node node_modules/next/dist/bin/next build",
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/next/dist/bin/next lint",
@@ -13,14 +14,17 @@
   "dependencies": {
     "@prisma/client": "5.22.0",
     "next": "15.0.4",
+    "pdf-parse": "^1.1.1",
+    "pdfjs-dist": "^5.4.624",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
-    "prisma": "5.22.0",
-    "typescript": "5.6.3",
     "@types/node": "22.9.0",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "18.3.12",
-    "@types/react-dom": "18.3.1"
+    "@types/react-dom": "18.3.1",
+    "prisma": "5.22.0",
+    "typescript": "5.6.3"
   }
 }

@@ -140,6 +140,15 @@ button.danger {
   border: 1px solid #d2c5ae;
 }
 
+.swipe-deck {
+  display: grid;
+  gap: 0;
+}
+
+.swipe-deck > * {
+  grid-area: 1 / 1;
+}
+
 .swipe-card {
   background: white;
   border: 1px solid #e5dccb;
@@ -148,6 +157,24 @@ button.danger {
   display: grid;
   gap: 8px;
   box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+  touch-action: none;
+  user-select: none;
+  position: relative;
+  will-change: transform, opacity;
+}
+
+.top-card {
+  z-index: 20;
+}
+
+.deck-card {
+  pointer-events: none;
+  z-index: 10;
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.swipe-card.dragging {
+  box-shadow: 0 24px 46px rgba(15, 23, 42, 0.16);
 }
 
 .swipe-meta {
@@ -155,11 +182,48 @@ button.danger {
   justify-content: space-between;
 }
 
+.swipe-indicators {
+  position: absolute;
+  inset: 12px 12px auto 12px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+.indicator {
+  border: 2px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.88);
+  transform: rotate(-9deg);
+}
+
+.indicator.nope {
+  color: #dc2626;
+}
+
+.indicator.apply {
+  color: #0f766e;
+  transform: rotate(9deg);
+}
+
 .swipe-actions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 8px;
+}
+
+.queue-note {
+  margin-top: 10px;
+  text-align: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.92);
+  border: 1px solid #d8d1c4;
 }
 
 .badge {

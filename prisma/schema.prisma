@@ -13,6 +13,9 @@ model UserProfile {
   email              String?
   phone              String?
   resumeText         String?
+  resumeFileName     String?
+  resumeFileMimeType String?
+  resumeFileData     Bytes?
   desiredRole        String?
   preferredLocations String?
   preferredSalaryMin Int?
@@ -59,6 +62,9 @@ model Application {
   status          String            @default("SUBMITTED")
   tailoredResume  String
   coverLetter     String
+  resumeFileName  String?
+  resumeFileMimeType String?
+  resumeFileData  Bytes?
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   job             JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)

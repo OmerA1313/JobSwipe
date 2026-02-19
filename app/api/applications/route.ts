@@ -22,7 +22,15 @@ export async function GET() {
     }
   });
 
-  return NextResponse.json({ applications });
+  return NextResponse.json({
+    applications: applications.map((application) => {
+      const { resumeFileData, ...safeApplication } = application;
+      return {
+        ...safeApplication,
+        hasResumeFile: Boolean(resumeFileData)
+      };
+    })
+  });
 }
 
 export async function POST(req: Request) {
@@ -67,6 +75,9 @@ export async function POST(req: Request) {
       jobId,
       tailoredResume,
       coverLetter,
+      resumeFileName: profile.resumeFileName,
+      resumeFileMimeType: profile.resumeFileMimeType,
+      resumeFileData: profile.resumeFileData,
       status: "SUBMITTED"
     }
   });
@@ -83,7 +94,13 @@ export async function POST(req: Request) {
   });
 
   return NextResponse.json({
-    application,
+    application: (() => {
+      const { resumeFileData, ...safeApplication } = application;
+      return {
+        ...safeApplication,
+        hasResumeFile: Boolean(resumeFileData)
+      };
+    })(),
     generated: {
       tailoredResume,
       coverLetter

@@ -3,7 +3,10 @@ export type ProfilePayload = {
   email?: string;
   phone?: string;
   resumeText?: string;
-  desiredRole?: string;
+  resumeFileName?: string;
+  resumeFileMimeType?: string;
+  resumeFileBase64?: string;
+  desiredRoles?: string[];
   preferredLocations?: string[];
   preferredSalaryMin?: number;
   remotePreference?: "remote" | "hybrid" | "onsite";
