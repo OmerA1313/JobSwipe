@@ -36,6 +36,9 @@ type FeedJob = {
   isRemote: boolean;
   source?: string;
   summary: string;
+  cardSummary?: string;
+  descriptionSummary?: string;
+  requirementsSummary?: string[];
   url: string;
   score: number;
   whyMatched: string[];
@@ -751,7 +754,22 @@ export default function HomePage() {
                 <p className="small">
                   {topJob.company} • {topJob.location} {topJob.isRemote ? "• Remote-friendly" : ""}
                 </p>
-                <p style={{ marginTop: 10 }}>{topJob.summary}</p>
+                <div className="job-brief">
+                  <h3>Description</h3>
+                  <p className="job-summary">{topJob.descriptionSummary ?? topJob.cardSummary ?? topJob.summary}</p>
+                </div>
+                {topJob.requirementsSummary && topJob.requirementsSummary.length > 0 ? (
+                  <div className="requirements-block">
+                    <h3>Requirements</h3>
+                    <div className="requirements-list">
+                      {topJob.requirementsSummary.map((item) => (
+                        <span className="req-chip" key={item}>
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div style={{ marginTop: 10 }}>
                   {topJob.whyMatched.map((reason) => (
                     <span className="badge" key={reason}>

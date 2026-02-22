@@ -258,6 +258,61 @@ button.danger {
   padding: 3px 8px;
 }
 
+.job-summary {
+  margin-top: 10px;
+  line-height: 1.45;
+}
+
+.job-brief {
+  margin-top: 10px;
+}
+
+.job-brief h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #334155;
+}
+
+.job-brief .job-summary {
+  margin-top: 6px;
+}
+
+.requirements-block {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid #dbe7f3;
+  display: grid;
+  gap: 8px;
+}
+
+.requirements-block h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #334155;
+}
+
+.requirements-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.req-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #e2e8f0;
+  color: #0f172a;
+  font-size: 0.75rem;
+  padding: 3px 9px;
+}
+
 .swipe-indicators {
   position: absolute;
   inset: 12px 12px auto 12px;

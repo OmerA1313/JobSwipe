@@ -5,6 +5,21 @@ const LOCATION_ALIASES: Record<string, string[]> = {
   germany: ["germany", "berlin", "munich", "hamburg", "frankfurt"]
 };
 
+const HTML_ENTITY_MAP: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: "\"",
+  apos: "'",
+  nbsp: " ",
+  ndash: "-",
+  mdash: "-",
+  rsquo: "'",
+  lsquo: "'",
+  rdquo: "\"",
+  ldquo: "\""
+};
+
 export function normalizeText(value: string) {
   return value
     .toLowerCase()
@@ -14,18 +29,64 @@ export function normalizeText(value: string) {
 }
 
 export function stripHtml(value: string) {
-  return value
+  return decodeHtmlEntities(value)
     .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&#[0-9]+;/g, " ")
+    .replace(/[\u2022\u00b7\u25aa\u25e6]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function decodeHtmlEntities(value: string) {
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (fullMatch, entityRaw) => {
+    const entity = String(entityRaw || "").toLowerCase();
+
+    if (entity.startsWith("#x")) {
+      const code = Number.parseInt(entity.slice(2), 16);
+      if (Number.isFinite(code) && code > 0) {
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return " ";
+        }
+      }
+      return " ";
+    }
+
+    if (entity.startsWith("#")) {
+      const code = Number.parseInt(entity.slice(1), 10);
+      if (Number.isFinite(code) && code > 0) {
+        try {
+          return String.fromCodePoint(code);
+        } catch {
+          return " ";
+        }
+      }
+      return " ";
+    }
+
+    return HTML_ENTITY_MAP[entity] ?? fullMatch;
+  });
+}
+
+export function sanitizeText(value: string) {
+  return stripHtml(value)
     .replace(/\s+/g, " ")
     .trim();
 }
 
 export function compactSummary(value: string, max = 240) {
-  const cleaned = stripHtml(value);
+  const cleaned = sanitizeText(value);
   if (cleaned.length <= max) return cleaned;
-  return `${cleaned.slice(0, max - 1).trimEnd()}...`;
+  const slice = cleaned.slice(0, max - 1).trimEnd();
+  const sentenceCut = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("; "), slice.lastIndexOf(": "));
+  if (sentenceCut >= 80) {
+    return `${slice.slice(0, sentenceCut + 1).trimEnd()}...`;
+  }
+  const wordCut = slice.lastIndexOf(" ");
+  if (wordCut >= 80) {
+    return `${slice.slice(0, wordCut).trimEnd()}...`;
+  }
+  return `${slice}...`;
 }
 
 export function parseSalaryRange(input?: string | null) {

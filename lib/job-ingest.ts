@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/prisma";
 import { adzunaAdapter } from "@/lib/job-sources/adzuna";
 import { arbeitnowAdapter } from "@/lib/job-sources/arbeitnow";
+import { glassdoorAdapter } from "@/lib/job-sources/glassdoor";
 import { greenhousePublicAdapter } from "@/lib/job-sources/greenhouse-public";
+import { linkedinAdapter } from "@/lib/job-sources/linkedin";
 import { leverPublicAdapter } from "@/lib/job-sources/lever-public";
 import { remotiveAdapter } from "@/lib/job-sources/remotive";
 import { theMuseAdapter } from "@/lib/job-sources/themuse";
 import type { IngestOptions, JobSourceAdapter, NormalizedJob } from "@/lib/job-sources/types";
-import { applyRemoteFilter, matchesPreferredLocations, preferenceScore } from "@/lib/job-sources/utils";
+import { applyRemoteFilter, compactSummary, matchesPreferredLocations, preferenceScore, sanitizeText } from "@/lib/job-sources/utils";
 
 export type IngestResult = {
   fetched: number;
@@ -20,6 +22,8 @@ export type IngestResult = {
 const sourceAdapters: JobSourceAdapter[] = [
   greenhousePublicAdapter,
   leverPublicAdapter,
+  linkedinAdapter,
+  glassdoorAdapter,
   theMuseAdapter,
   adzunaAdapter,
   remotiveAdapter,
@@ -34,6 +38,23 @@ function dedupeJobs(jobs: NormalizedJob[]) {
     }
   }
   return Array.from(deduped.values());
+}
+
+function sanitizeJob(job: NormalizedJob): NormalizedJob | null {
+  const title = sanitizeText(job.title);
+  const company = sanitizeText(job.company);
+  const locationRaw = sanitizeText(job.location);
+  const summaryRaw = sanitizeText(job.summary);
+
+  if (!title || !company || !job.url) return null;
+
+  return {
+    ...job,
+    title,
+    company,
+    location: locationRaw || (job.isRemote ? "Remote" : "Unspecified"),
+    summary: compactSummary(summaryRaw || `${title} at ${company}`)
+  };
 }
 
 export async function ingestExternalJobs(options: IngestOptions = {}): Promise<IngestResult> {
@@ -68,7 +89,10 @@ export async function ingestExternalJobs(options: IngestOptions = {}): Promise<I
     }
   });
 
-  const deduped = dedupeJobs(collected).filter((job) => applyRemoteFilter(job, options));
+  const deduped = dedupeJobs(collected)
+    .map((job) => sanitizeJob(job))
+    .filter((job): job is NormalizedJob => Boolean(job))
+    .filter((job) => applyRemoteFilter(job, options));
   const preferredLocationHits = deduped.filter((job) => matchesPreferredLocations(job, options.preferredLocations ?? [])).length;
 
   const sorted = deduped.sort((a, b) => preferenceScore(b, options) - preferenceScore(a, options));
