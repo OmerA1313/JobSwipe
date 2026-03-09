@@ -3,6 +3,7 @@ import { adzunaAdapter } from "@/lib/job-sources/adzuna";
 import { arbeitnowAdapter } from "@/lib/job-sources/arbeitnow";
 import { glassdoorAdapter } from "@/lib/job-sources/glassdoor";
 import { greenhousePublicAdapter } from "@/lib/job-sources/greenhouse-public";
+import { hireMeTechAdapter } from "@/lib/job-sources/hiremetech";
 import { linkedinAdapter } from "@/lib/job-sources/linkedin";
 import { leverPublicAdapter } from "@/lib/job-sources/lever-public";
 import { remotiveAdapter } from "@/lib/job-sources/remotive";
@@ -20,6 +21,7 @@ export type IngestResult = {
 };
 
 const sourceAdapters: JobSourceAdapter[] = [
+  hireMeTechAdapter,
   greenhousePublicAdapter,
   leverPublicAdapter,
   linkedinAdapter,
