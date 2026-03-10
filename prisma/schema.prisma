@@ -45,6 +45,7 @@ model JobPosting {
   createdAt   DateTime     @default(now())
   decisions   JobDecision[]
   application Application?
+  automationRuns AutomationRun[]
 }
 
 model JobDecision {
@@ -69,4 +70,36 @@ model Application {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   job             JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+}
+
+model AutomationRun {
+  id               Int               @id @default(autoincrement())
+  jobId             Int
+  siteType          String
+  status            String            @default("QUEUED")
+  currentStep       String?
+  needsInput        Boolean           @default(false)
+  blockingQuestion  String?
+  inputField        String?
+  lastError         String?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  job               JobPosting        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  events            AutomationEvent[]
+
+  @@index([status, createdAt])
+}
+
+model AutomationEvent {
+  id          Int            @id @default(autoincrement())
+  runId        Int
+  level       String         @default("INFO")
+  message     String
+  payload     String?
+  createdAt   DateTime       @default(now())
+  run         AutomationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
 }

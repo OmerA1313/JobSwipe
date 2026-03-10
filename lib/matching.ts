@@ -25,8 +25,13 @@ type MatchSignals = {
 
 type JobSummaryInput = {
   title: string;
+  company?: string;
+  location?: string;
   summary: string;
   isRemote: boolean;
+  source?: string;
+  senioritySignal?: string;
+  remoteSignal?: string;
 };
 
 const LOCATION_ALIASES: Record<string, string[]> = {
@@ -869,6 +874,35 @@ function splitSummarySegments(text: string) {
     .filter((segment) => segment.length > 0);
 }
 
+function normalizeSegmentKey(segment: string) {
+  return normalizeText(
+    segment
+      .replace(/\b(?:we are|we re|you will|you ll|you would|you can|you should|candidate will|the role|this role)\b/gi, "")
+      .trim()
+  );
+}
+
+function cleanDescriptionSegment(segment: string) {
+  return stripListingFreshness(
+    segment
+      .replace(
+        /^(about (?:the )?job|about (?:the )?role|job description|responsibilities|what you(?:'|’)ll do|what you will do|overview|summary)[:\-\s]*/i,
+        ""
+      )
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+}
+
+function appendUnique(items: string[], seen: Set<string>, rawValue: string | undefined, maxItems: number, maxChars = 120) {
+  const value = rawValue?.trim();
+  if (!value || items.length >= maxItems) return;
+  const key = normalizeSegmentKey(value);
+  if (!key || seen.has(key)) return;
+  seen.add(key);
+  items.push(truncateSummary(value, maxChars));
+}
+
 function isRequirementSegment(segment: string) {
   const normalized = normalizeText(segment);
   if (!normalized) return false;
@@ -890,10 +924,41 @@ function stripListingFreshness(value: string) {
     .trim();
 }
 
+function extractDescriptionHighlights(job: JobSummaryInput) {
+  const highlights: string[] = [];
+  const seen = new Set<string>();
+  const maxHighlights = 5;
+
+  splitSummarySegments(job.summary)
+    .filter((segment) => !isRequirementSegment(segment))
+    .map((segment) => cleanDescriptionSegment(segment))
+    .filter((segment) => segment.length >= 12)
+    .forEach((segment) => {
+      const key = normalizeSegmentKey(segment);
+      if (!key || seen.has(key) || highlights.length >= maxHighlights) return;
+      seen.add(key);
+      highlights.push(truncateSummary(segment, 120));
+    });
+
+  appendUnique(highlights, seen, job.company ? `${job.title} at ${job.company}` : job.title, maxHighlights);
+  appendUnique(highlights, seen, job.location ? `Location: ${job.location}` : undefined, maxHighlights);
+  appendUnique(
+    highlights,
+    seen,
+    job.isRemote ? job.remoteSignal ?? "Work mode: remote-friendly" : "Work mode: on-site or hybrid",
+    maxHighlights
+  );
+  appendUnique(highlights, seen, job.source ? `Source: ${job.source}` : undefined, maxHighlights);
+
+  if (highlights.length === 0) {
+    highlights.push(truncateSummary(`${job.title}${job.isRemote ? " with remote-friendly setup" : ""}.`, 120));
+  }
+
+  return highlights.slice(0, maxHighlights);
+}
+
 function extractDescriptionSummary(job: JobSummaryInput) {
-  const segments = splitSummarySegments(job.summary);
-  const preferredRaw = segments.find((segment) => !isRequirementSegment(segment)) ?? segments[0] ?? "";
-  const preferred = stripListingFreshness(preferredRaw);
+  const preferred = extractDescriptionHighlights(job)[0] ?? "";
   if (preferred) return truncateSummary(preferred, 190);
   return truncateSummary(`${job.title} role${job.isRemote ? " (remote-friendly)" : ""}.`, 190);
 }
@@ -902,12 +967,19 @@ function extractRequirementsSummary(job: JobSummaryInput, matchReasons: string[]
   const target = normalizeText(`${job.title} ${job.summary}`);
   const requirements: string[] = [];
   const seen = new Set<string>();
+  const maxRequirements = 5;
+  const inferredSeniority =
+    job.senioritySignal ??
+    (() => {
+      const inferred = inferSeniorityFromText(`${job.title} ${job.summary}`);
+      return inferred.level === "unknown" ? undefined : toTitleCase(inferred.level);
+    })();
 
   const fromDescription = splitSummarySegments(job.summary)
     .filter((segment) => isRequirementSegment(segment))
     .map((segment) => normalizeRequirementSegment(segment))
     .filter((segment) => segment.length >= 8)
-    .slice(0, 3);
+    .slice(0, maxRequirements);
 
   fromDescription.forEach((segment) => {
     const key = normalizeText(segment);
@@ -917,41 +989,49 @@ function extractRequirementsSummary(job: JobSummaryInput, matchReasons: string[]
   });
 
   const minYears = extractMinimumYears(`${job.title} ${job.summary}`);
-  if (typeof minYears === "number" && requirements.length < 3) {
-    requirements.push(`${minYears}+ years experience`);
+  if (typeof minYears === "number" && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, `Experience: ${minYears}+ years`, maxRequirements);
   }
 
-  const skills = TECH_SKILL_TERMS.filter((term) => target.includes(term)).slice(0, 3 - requirements.length);
-  if (skills.length > 0 && requirements.length < 3) {
+  const skills = TECH_SKILL_TERMS.filter((term) => target.includes(term)).slice(0, Math.max(0, maxRequirements - requirements.length));
+  if (skills.length > 0 && requirements.length < maxRequirements) {
     const labels = skills.map((skill) => TECH_SKILL_LABELS[skill] ?? toTitleCase(skill));
-    requirements.push(`Tech: ${labels.join(", ")}`);
+    appendUnique(requirements, seen, `Stack: ${labels.join(", ")}`, maxRequirements);
   }
 
-  if (target.includes("degree") && requirements.length < 3) {
-    requirements.push("Degree mentioned");
+  if (target.includes("degree") && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, "Education: degree mentioned", maxRequirements);
   }
 
-  if (job.isRemote && requirements.length < 3) {
-    requirements.push("Remote-friendly");
+  if (inferredSeniority && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, `Level: ${inferredSeniority}`, maxRequirements);
+  }
+
+  if (job.location && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, `Location: ${job.location}`, maxRequirements);
+  }
+
+  if (job.remoteSignal && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, `Work mode: ${job.remoteSignal}`, maxRequirements);
+  } else if (job.isRemote && requirements.length < maxRequirements) {
+    appendUnique(requirements, seen, "Work mode: remote-friendly", maxRequirements);
   }
 
   if (requirements.length === 0) {
-    const bestReason = matchReasons.find(
+    const bestReasons = matchReasons.filter(
       (reason) =>
         reason.startsWith("Experience fit:") ||
         reason.startsWith("Seniority match") ||
         reason.startsWith("Experience gap:")
     );
-    if (bestReason) {
-      requirements.push(bestReason);
-    }
+    bestReasons.forEach((reason) => appendUnique(requirements, seen, reason, maxRequirements));
   }
 
   if (requirements.length === 0) {
     requirements.push("No explicit requirements provided by source");
   }
 
-  return requirements.slice(0, 3);
+  return requirements.slice(0, maxRequirements);
 }
 
 export function rankJobsForFeed(profile: UserProfile, jobs: JobPosting[], options: RankOptions = {}) {
@@ -986,8 +1066,13 @@ export function rankJobsForFeed(profile: UserProfile, jobs: JobPosting[], option
       const cleanSummary = sanitizeText(job.summary);
       const cardInput: JobSummaryInput = {
         title: cleanTitle,
+        company: cleanCompany,
+        location: cleanLocation || (job.isRemote ? "Remote" : "Unspecified"),
         summary: cleanSummary || `${cleanTitle} at ${cleanCompany}`,
-        isRemote: job.isRemote
+        isRemote: job.isRemote,
+        source: job.source ?? undefined,
+        senioritySignal: match.signals.seniority,
+        remoteSignal: match.signals.remote
       };
       const descriptionSummary = extractDescriptionSummary(cardInput);
 
@@ -1001,6 +1086,7 @@ export function rankJobsForFeed(profile: UserProfile, jobs: JobPosting[], option
         summary: cardInput.summary,
         cardSummary: descriptionSummary,
         descriptionSummary,
+        descriptionHighlights: extractDescriptionHighlights(cardInput),
         requirementsSummary: extractRequirementsSummary(cardInput, match.reasons),
         url: job.url,
         score: match.score,

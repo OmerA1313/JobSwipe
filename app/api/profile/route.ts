@@ -47,6 +47,7 @@ export async function PUT(req: Request) {
   await ensureBootstrap();
 
   const payload = (await req.json()) as ProfilePayload;
+  const existingProfile = await prisma.userProfile.findUniqueOrThrow({ where: { id: 1 } });
   const updateData: {
     fullName?: string;
     email?: string;
@@ -66,20 +67,24 @@ export async function PUT(req: Request) {
     resumeFileMimeType?: string | null;
     resumeFileData?: Buffer | null;
   } = {
-    fullName: payload.fullName,
-    email: payload.email,
-    phone: payload.phone,
-    resumeText: payload.resumeText,
-    desiredRole: (payload.desiredRoles ?? []).join(", "),
-    seniorityPreference: payload.seniorityPreference ?? "any",
-    preferredLocations: (payload.preferredLocations ?? []).join(", "),
-    preferredSalaryMin: payload.preferredSalaryMin,
-    remotePreference: payload.remotePreference ?? "hybrid",
-    visaStatus: payload.visaStatus,
-    yearsExperience: payload.yearsExperience,
-    linkedInUrl: payload.linkedInUrl,
-    githubUrl: payload.githubUrl,
-    portfolioUrl: payload.portfolioUrl
+    fullName: payload.fullName ?? existingProfile.fullName ?? undefined,
+    email: payload.email ?? existingProfile.email ?? undefined,
+    phone: payload.phone ?? existingProfile.phone ?? undefined,
+    resumeText: payload.resumeText ?? existingProfile.resumeText ?? undefined,
+    desiredRole:
+      payload.desiredRoles !== undefined ? payload.desiredRoles.join(", ") : existingProfile.desiredRole ?? undefined,
+    seniorityPreference: payload.seniorityPreference ?? existingProfile.seniorityPreference ?? "any",
+    preferredLocations:
+      payload.preferredLocations !== undefined
+        ? payload.preferredLocations.join(", ")
+        : existingProfile.preferredLocations ?? undefined,
+    preferredSalaryMin: payload.preferredSalaryMin ?? existingProfile.preferredSalaryMin ?? undefined,
+    remotePreference: payload.remotePreference ?? existingProfile.remotePreference ?? "hybrid",
+    visaStatus: payload.visaStatus ?? existingProfile.visaStatus ?? undefined,
+    yearsExperience: payload.yearsExperience ?? existingProfile.yearsExperience ?? undefined,
+    linkedInUrl: payload.linkedInUrl ?? existingProfile.linkedInUrl ?? undefined,
+    githubUrl: payload.githubUrl ?? existingProfile.githubUrl ?? undefined,
+    portfolioUrl: payload.portfolioUrl ?? existingProfile.portfolioUrl ?? undefined
   };
 
   if (typeof payload.resumeFileBase64 === "string") {

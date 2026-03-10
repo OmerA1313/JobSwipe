@@ -1,5 +1,6 @@
 node_modules
 .next
+.runtime
 .env
 .env.local
 prisma/dev.db

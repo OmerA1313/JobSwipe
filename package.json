@@ -5,6 +5,11 @@
   "scripts": {
     "dev": "node node_modules/next/dist/bin/next dev",
     "dev:restart": "pkill -f \"node node_modules/next/dist/bin/next dev\" || true; npm run dev",
+    "dev:share": "bash scripts/dev-share.sh up",
+    "dev:share:restart": "bash scripts/dev-share.sh restart",
+    "dev:share:stop": "bash scripts/dev-share.sh stop",
+    "dev:share:status": "bash scripts/dev-share.sh status",
+    "automation:worker": "node scripts/automation-worker.js",
     "build": "node node_modules/next/dist/bin/next build",
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/next/dist/bin/next lint",
@@ -22,6 +27,7 @@
     "@types/node": "22.9.0",
     "@types/react": "18.3.12",
     "@types/react-dom": "18.3.1",
+    "playwright": "^1.58.2",
     "prisma": "5.22.0",
     "typescript": "5.6.3"
   }

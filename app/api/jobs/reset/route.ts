@@ -7,16 +7,20 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   await ensureBootstrap();
 
-  const resetResult = await prisma.jobDecision.deleteMany({
-    where: {
-      decision: {
-        in: ["SKIP", "NOT_FIT"]
+  const [decisionResetResult, applicationResetResult, automationResetResult] = await Promise.all([
+    prisma.jobDecision.deleteMany({
+      where: {
+        decision: {
+          in: ["SKIP", "NOT_FIT", "APPLIED"]
+        }
       }
-    }
-  });
+    }),
+    prisma.application.deleteMany(),
+    prisma.automationRun.deleteMany()
+  ]);
 
   return NextResponse.json({
-    message: `Reset ${resetResult.count} skipped/not-fit decisions.`,
-    resetCount: resetResult.count
+    message: `Reset ${decisionResetResult.count} decisions, ${applicationResetResult.count} applications, and ${automationResetResult.count} automation runs.`,
+    resetCount: decisionResetResult.count + applicationResetResult.count + automationResetResult.count
   });
 }

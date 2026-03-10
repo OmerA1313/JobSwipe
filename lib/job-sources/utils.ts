@@ -30,8 +30,12 @@ export function normalizeText(value: string) {
 
 export function stripHtml(value: string) {
   return decodeHtmlEntities(value)
+    .replace(/<(?:br|hr)\s*\/?>/gi, ". ")
+    .replace(/<\/(?:p|div|section|article|li|ul|ol|h1|h2|h3|h4|h5|h6)>/gi, ". ")
+    .replace(/<li[^>]*>/gi, "- ")
     .replace(/<[^>]*>/g, " ")
     .replace(/[\u2022\u00b7\u25aa\u25e6]/g, " ")
+    .replace(/\s*\.\s*\.\s*/g, ". ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -74,7 +78,7 @@ export function sanitizeText(value: string) {
     .trim();
 }
 
-export function compactSummary(value: string, max = 240) {
+export function compactSummary(value: string, max = 4000) {
   const cleaned = sanitizeText(value);
   if (cleaned.length <= max) return cleaned;
   const slice = cleaned.slice(0, max - 1).trimEnd();
