@@ -9,8 +9,7 @@ const DEFAULT_LEVER_SITES = [
   "appcard",
   "meld",
   "twingate",
-  "fairmatic",
-  "webflow"
+  "fairmatic"
 ];
 
 type LeverPosting = {
@@ -49,7 +48,16 @@ function normalizeLeverJob(site: string, raw: LeverPosting): NormalizedJob | nul
 }
 
 async function fetchLeverSiteJobs(site: string) {
-  const payload = (await fetchJson(`https://api.lever.co/v0/postings/${encodeURIComponent(site)}?mode=json`)) as unknown;
+  let payload: unknown;
+  try {
+    payload = await fetchJson(`https://api.lever.co/v0/postings/${encodeURIComponent(site)}?mode=json`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("HTTP 404")) {
+      return [];
+    }
+    throw error;
+  }
   const jobs = Array.isArray(payload) ? payload : [];
   return jobs
     .map((raw) => (raw && typeof raw === "object" ? normalizeLeverJob(site, raw as LeverPosting) : null))
