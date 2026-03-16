@@ -1,0 +1,321 @@
+[
+  {
+    "name": "Job Apply Browserbase Orchestrator",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "job-apply-agent",
+          "options": {}
+        },
+        "id": "76f2cd97-b63f-4b9d-bf73-aef59fd08c37",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "6cd679f7-6045-493c-9ca2-726ba392b3ec"
+      },
+      {
+        "parameters": {
+          "jsCode": "const incoming = $input.first().json;\nconst trigger = incoming.body ?? incoming;\nconst headers = incoming.headers ?? {};\nconst automationSecret = headers['x-automation-secret'] || headers['X-Automation-Secret'] || '';\n\nconst contextUrl = trigger.app?.contextUrl ?? '';\nconst callbackUrl = trigger.app?.callbackUrl ?? '';\nconst jobUrl = trigger.job?.url ?? '';\n\nif (!/^https?:\\/\\//.test(contextUrl)) {\n  throw new Error('Invalid context URL in webhook payload');\n}\nif (!/^https?:\\/\\//.test(callbackUrl)) {\n  throw new Error('Invalid callback URL in webhook payload');\n}\nif (!/^https?:\\/\\//.test(jobUrl)) {\n  throw new Error('Invalid job URL in webhook payload');\n}\nif (!automationSecret) {\n  throw new Error('Missing automation secret header on webhook request');\n}\n\nreturn [{ json: { reason: trigger.reason ?? 'queued', run: trigger.run ?? {}, job: trigger.job ?? {}, profile: trigger.profile ?? {}, app: trigger.app ?? {}, contextUrl, callbackUrl, jobUrl, automationSecret } }];"
+        },
+        "id": "7f5a38f5-0e90-4a28-bbed-55b271752c4b",
+        "name": "Prepare Dispatch Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.contextUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              },
+              {
+                "name": "accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "61e7a17e-715d-468a-bb65-b22eb482902d",
+        "name": "Fetch Run Context",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const dispatch = $('Prepare Dispatch Input').item.json || {};\nconst context = $input.first().json || {};\nconst run = context.run || dispatch.run || {};\nconst job = run.job || dispatch.job || {};\nconst profile = context.profile || dispatch.profile || {};\nconst answers = run.answers || {};\nconst siteType = String(run.siteType || dispatch.run?.siteType || '').toUpperCase();\nconst jobUrl = job.url || dispatch.jobUrl || '';\nif (!jobUrl) throw new Error('Missing job URL for Browserbase task');\n\nconst answerLines = Object.entries(answers).length\n  ? Object.entries(answers).map(([question, answer]) => '- ' + question + ': ' + answer).join('\\n')\n  : '- none';\n\nconst siteHintLines = [];\nif (siteType === 'COMEET' || /comeet\\.com/i.test(jobUrl)) {\n  siteHintLines.push('- This is likely a Comeet-hosted application. The initial page may be a job description page rather than the actual form.');\n  siteHintLines.push('- Prioritize the main application CTA, especially text like \"Apply for this job\", \"Apply\", \"Submit application\", or \"Start application\".');\n  siteHintLines.push('- After clicking a CTA, inspect iframes, embedded widgets, drawers, modals, sticky sidebars, and below-the-fold content for the actual form.');\n}\n\nconst instruction = [\n  'Complete this job application if possible.',\n  'You must first reach the real application form before attempting to fill fields.',\n  'If the current page is only a listing/details page, find the main application CTA and click it.',\n  'Search visible buttons and links for application entry points, especially \"Apply for this job\", \"Apply\", \"Submit application\", or \"Start application\".',\n  'Scroll as needed and inspect top sections, sticky sidebars, lower sections, modals, drawers, embeds, and iframes after each click.',\n  'Once the form is visible, fill visible contact fields directly before attempting anything else:',\n  '- full name using %full_name%',\n  '- email using %email%',\n  '- phone using %phone%',\n  'If LinkedIn, GitHub, or portfolio fields are visible, fill them using %linkedin_url%, %github_url%, and %portfolio_url% when available.',\n  'Do not use Tab/Enter to guess field order when visible text inputs are present. Prefer direct click-and-fill actions on named fields.',\n  'Never attempt to submit until all visible required contact fields are filled.',\n  'If a resume upload is required, stop and report NEEDS_INPUT because resume file upload is not available in this Browserbase flow.',\n  'If login, captcha, human verification, OTP, work authorization, or an unknown required answer blocks progress, stop and report NEEDS_INPUT.',\n  'Only report SUBMITTED if the application was clearly submitted.',\n  '',\n  'Target job:',\n  '- Title: ' + (job.title || ''),\n  '- Company: ' + (job.company || ''),\n  '- URL: ' + jobUrl,\n  '',\n  'Saved answers for this run:',\n  answerLines,\n  '',\n  ...siteHintLines,\n  '',\n  'When you finish, your final message must start with these exact lines:',\n  'FINAL_STATUS: SUBMITTED or NEEDS_INPUT or FAILED',\n  'MESSAGE: short explanation',\n  'BLOCKER: blocker text or none',\n  'INPUT_FIELD: one of manual_review, login, human_verification, resume_upload, work_authorization, unknown_required_answer, none',\n  'PAGE_STATE: short description of the final page state',\n  'ATTEMPTED_ACTIONS: comma-separated summary of actions you took'\n].join('\\n');\n\nconst systemPrompt = [\n  'You are a careful job-application automation agent.',\n  'Treat the task as incomplete unless one of these is true: application submitted, a concrete blocker was reached, or the site/tool genuinely failed.',\n  'Do not finish early just because the first page has no form fields.',\n  'Before declaring the form missing, you must try to enter the application flow and inspect iframe/embed states explicitly.',\n  'When contact inputs are visible, directly fill them before any submit attempt.',\n  'Avoid keyboard-only navigation if labeled inputs are visible; prefer direct click-and-fill actions.',\n  'Never invent data. If required information is missing, say so in the final structured message.',\n  'Use the exact final message format requested by the instruction.'\n].join('\\n');\n\nreturn [{ json: {\n  ...dispatch,\n  ...context,\n  run,\n  job,\n  profile,\n  siteType,\n  jobUrl,\n  browserbaseInstruction: instruction,\n  browserbaseSystemPrompt: systemPrompt,\n} }];"
+        },
+        "id": "cb0a46b3-7d22-4ed6-a39e-cf50f931097b",
+        "name": "Prepare Browserbase Task",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={\"status\":\"RUNNING\",\"currentStep\":\"Browserbase is running\",\"message\":\"Browserbase started the browser automation.\"}",
+          "options": {}
+        },
+        "id": "4644899b-9355-4352-9f1f-2c500600f37d",
+        "name": "Report Running",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "agent",
+          "operation": "execute",
+          "url": "={{ $(\"Prepare Browserbase Task\").item.json.jobUrl }}",
+          "instruction": "={{ $(\"Prepare Browserbase Task\").item.json.browserbaseInstruction }}",
+          "driverModel": "openai/gpt-4o-mini",
+          "mode": "dom",
+          "modelDom": "openai/gpt-4o-mini",
+          "options": {
+            "maxSteps": 50,
+            "systemPrompt": "={{ $(\"Prepare Browserbase Task\").item.json.browserbaseSystemPrompt }}"
+          },
+          "browserOptions": {
+            "advancedStealth": false,
+            "blockAds": true,
+            "logSession": true,
+            "recordSession": true,
+            "solveCaptchas": false,
+            "viewportHeight": 711,
+            "viewportWidth": 1288
+          },
+          "sessionOptions": {
+            "region": "eu-central-1",
+            "timeout": 900,
+            "proxies": false
+          },
+          "variables": {
+            "variableValues": [
+              {
+                "name": "full_name",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.fullName || \"\" }}",
+                "description": "Applicant full name"
+              },
+              {
+                "name": "email",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.email || \"\" }}",
+                "description": "Applicant email address"
+              },
+              {
+                "name": "phone",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.phone || \"\" }}",
+                "description": "Applicant phone number"
+              },
+              {
+                "name": "linkedin_url",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.linkedInUrl || \"\" }}",
+                "description": "Applicant LinkedIn URL"
+              },
+              {
+                "name": "github_url",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.githubUrl || \"\" }}",
+                "description": "Applicant GitHub URL"
+              },
+              {
+                "name": "portfolio_url",
+                "value": "={{ $(\"Prepare Browserbase Task\").item.json.profile.portfolioUrl || \"\" }}",
+                "description": "Applicant portfolio URL"
+              }
+            ]
+          }
+        },
+        "id": "a8fdf2df-aa7c-4101-95a0-1dcd86c5225b",
+        "name": "Browserbase Agent",
+        "type": "n8n-nodes-browserbase.browserbase",
+        "typeVersion": 2,
+        "position": [
+          1200,
+          0
+        ],
+        "credentials": {
+          "browserbaseApi": {
+            "id": "cAX6BZKaxHdpf9gQ",
+            "name": "Browserbase account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const result = $input.first().json || {};\nconst state = $('Prepare Browserbase Task').item.json || {};\nconst sessionId = typeof result.sessionId === 'string' ? result.sessionId : '';\nconst sessionUrl = sessionId ? 'https://browserbase.com/sessions/' + sessionId : undefined;\nconst replayUrl = sessionUrl;\nconst rawMessage = typeof result.message === 'string' ? result.message : typeof result.error === 'string' ? result.error : 'Browserbase returned no message.';\nconst lines = rawMessage.split(/\\r?\\n/).map((line) => line.trim()).filter(Boolean);\nconst readMarker = (name) => {\n  const line = lines.find((entry) => entry.toUpperCase().startsWith(name + ':'));\n  return line ? line.slice(name.length + 1).trim() : '';\n};\nconst finalStatus = (readMarker('FINAL_STATUS') || '').toUpperCase();\nconst finalMessage = readMarker('MESSAGE') || rawMessage;\nconst blocker = readMarker('BLOCKER');\nconst inputField = readMarker('INPUT_FIELD').toLowerCase();\nconst pageState = readMarker('PAGE_STATE');\nconst attemptedActions = readMarker('ATTEMPTED_ACTIONS');\nconst serialized = JSON.stringify(result).toLowerCase();\nconst needsInputPattern = /(captcha|human verification|verify you are human|otp|two-factor|2fa|login|sign in|authorization|work authorization|resume upload|upload.*resume|required file|manual review|manual attention|missing answer)/i;\nconst submittedPattern = /(application submitted|submitted successfully|thank you for applying|your application has been submitted)/i;\n\nconst browserbasePayload = {\n  sessionId,\n  sessionUrl,\n  replayUrl,\n  taskStatus: result.error ? 'FAILED' : (result.completed === false ? 'INCOMPLETE' : 'COMPLETED'),\n  completed: result.completed,\n  actions: Array.isArray(result.actions) ? result.actions : [],\n  usage: result.usage ?? null,\n  raw: result,\n};\n\nlet finalPayload;\nif (result.error || result.success === false) {\n  const message = finalMessage || rawMessage;\n  if (needsInputPattern.test(message)) {\n    finalPayload = {\n      status: 'NEEDS_INPUT',\n      needsInput: true,\n      currentStep: 'Waiting for user attention',\n      blockingQuestion: blocker && blocker.toLowerCase() !== 'none' ? blocker : message,\n      inputField: inputField && inputField !== 'none' ? inputField : 'manual_review',\n      message,\n      level: 'WARN',\n      payload: { browserbase: browserbasePayload },\n    };\n  } else {\n    finalPayload = {\n      status: 'FAILED',\n      currentStep: 'Automation failed',\n      lastError: message,\n      message,\n      level: 'ERROR',\n      payload: { browserbase: browserbasePayload },\n    };\n  }\n} else if (finalStatus === 'SUBMITTED' || submittedPattern.test(rawMessage)) {\n  finalPayload = {\n    status: 'SUBMITTED',\n    currentStep: 'Application submitted',\n    message: finalMessage,\n    payload: { browserbase: browserbasePayload },\n  };\n} else if (finalStatus === 'NEEDS_INPUT' || needsInputPattern.test(rawMessage)) {\n  finalPayload = {\n    status: 'NEEDS_INPUT',\n    needsInput: true,\n    currentStep: 'Waiting for user attention',\n    blockingQuestion: blocker && blocker.toLowerCase() !== 'none' ? blocker : finalMessage,\n    inputField: inputField && inputField !== 'none' ? inputField : 'manual_review',\n    message: [finalMessage, pageState ? 'Page state: ' + pageState : '', attemptedActions ? 'Actions: ' + attemptedActions : ''].filter(Boolean).join(' '),\n    level: 'WARN',\n    payload: { browserbase: browserbasePayload },\n  };\n} else if (finalStatus === 'FAILED') {\n  finalPayload = {\n    status: 'FAILED',\n    currentStep: 'Automation failed',\n    lastError: [finalMessage, pageState ? 'Page state: ' + pageState : '', attemptedActions ? 'Actions: ' + attemptedActions : ''].filter(Boolean).join(' '),\n    message: [finalMessage, pageState ? 'Page state: ' + pageState : '', attemptedActions ? 'Actions: ' + attemptedActions : ''].filter(Boolean).join(' '),\n    level: 'ERROR',\n    payload: { browserbase: browserbasePayload },\n  };\n} else {\n  finalPayload = {\n    status: 'NEEDS_INPUT',\n    needsInput: true,\n    currentStep: 'Waiting for user attention',\n    blockingQuestion: 'Browserbase finished without a clear terminal status. Inspect the replay to continue.',\n    inputField: 'manual_review',\n    message: [finalMessage, pageState ? 'Page state: ' + pageState : '', attemptedActions ? 'Actions: ' + attemptedActions : ''].filter(Boolean).join(' '),\n    level: 'WARN',\n    payload: { browserbase: browserbasePayload },\n  };\n}\n\nreturn [{ json: { finalPayload } }];"
+        },
+        "id": "7037e124-a460-43cf-a3e2-ac379b473b5e",
+        "name": "Prepare Final Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.finalPayload) }}",
+          "options": {}
+        },
+        "id": "62600da7-eb75-446e-9e0b-3cc640f69e79",
+        "name": "Report Final Status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1680,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Prepare Dispatch Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Dispatch Input": {
+        "main": [
+          [
+            {
+              "node": "Fetch Run Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Run Context": {
+        "main": [
+          [
+            {
+              "node": "Prepare Browserbase Task",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Browserbase Task": {
+        "main": [
+          [
+            {
+              "node": "Report Running",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Report Running": {
+        "main": [
+          [
+            {
+              "node": "Browserbase Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Browserbase Agent": {
+        "main": [
+          [
+            {
+              "node": "Prepare Final Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Final Callback": {
+        "main": [
+          [
+            {
+              "node": "Report Final Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {},
+    "pinData": {},
+    "meta": null,
+    "versionId": "browserbase-local"
+  }
+]

@@ -200,6 +200,26 @@ textarea {
   margin-top: 6px;
 }
 
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(133, 155, 183, 0.2);
+}
+
+.metric-card strong {
+  font-size: 0.96rem;
+  color: var(--ink);
+}
+
 .chip {
   display: inline-flex;
   align-items: center;
@@ -260,6 +280,24 @@ button.danger {
 button.secondary-strong {
   background: linear-gradient(135deg, rgba(16, 32, 51, 0.9), rgba(38, 64, 95, 0.9));
   color: white;
+}
+
+button.text-button {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 0.8rem;
+  font-weight: 700;
+  justify-self: start;
+  box-shadow: none;
+}
+
+button.text-button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  text-decoration: underline;
 }
 
 .small {
@@ -336,10 +374,10 @@ button.secondary-strong {
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 251, 255, 0.98)),
     linear-gradient(135deg, rgba(21, 94, 239, 0.05), rgba(14, 116, 144, 0.03));
   border: 1px solid rgba(133, 155, 183, 0.2);
-  border-radius: 28px;
-  padding: 20px;
+  border-radius: 24px;
+  padding: 16px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
   box-shadow: 0 24px 44px rgba(16, 32, 51, 0.1);
   touch-action: none;
   user-select: none;
@@ -460,7 +498,7 @@ button.secondary-strong {
 }
 
 .job-brief {
-  margin-top: 10px;
+  margin-top: 6px;
 }
 
 .job-brief h3 {
@@ -476,11 +514,11 @@ button.secondary-strong {
 }
 
 .job-bullets {
-  margin: 8px 0 0;
+  margin: 6px 0 0;
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .job-bullets li {
@@ -503,13 +541,13 @@ button.secondary-strong {
 }
 
 .requirements-block {
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 18px;
-  background: linear-gradient(180deg, rgba(242, 248, 255, 0.92), rgba(250, 252, 255, 0.94));
-  border: 1px solid rgba(133, 155, 183, 0.18);
+  margin-top: 6px;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .requirements-block h3 {
@@ -525,29 +563,27 @@ button.secondary-strong {
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 7px;
+  gap: 6px;
 }
 
 .req-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  position: relative;
+  padding-left: 15px;
   color: #1a344f;
   font-size: 0.8rem;
   line-height: 1.45;
 }
 
 .req-item::before {
-  content: "Must";
-  flex: 0 0 auto;
-  margin-top: 1px;
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.58em;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: rgba(15, 90, 229, 0.08);
-  color: #0f5ae5;
-  font-size: 0.67rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 3px 7px;
+  background: linear-gradient(135deg, #0f5ae5, #0f9db8);
+  box-shadow: 0 0 0 4px rgba(15, 90, 229, 0.08);
 }
 
 .swipe-indicators {
@@ -615,6 +651,10 @@ button.secondary-strong {
 
 @media (max-width: 760px) {
   .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-grid {
     grid-template-columns: 1fr;
   }
 

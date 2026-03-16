@@ -1,0 +1,639 @@
+[
+  {
+    "name": "Job Apply Anchor Orchestrator",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "job-apply-agent",
+          "options": {}
+        },
+        "id": "76f2cd97-b63f-4b9d-bf73-aef59fd08c37",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [
+          0,
+          0
+        ],
+        "webhookId": "6cd679f7-6045-493c-9ca2-726ba392b3ec"
+      },
+      {
+        "parameters": {
+          "jsCode": "const incoming = $input.first().json;\nconst trigger = incoming.body ?? incoming;\nconst headers = incoming.headers ?? {};\nconst automationSecret = headers['x-automation-secret'] || headers['X-Automation-Secret'] || '';\n\nconst contextUrl = trigger.app?.contextUrl ?? '';\nconst callbackUrl = trigger.app?.callbackUrl ?? '';\nconst jobUrl = trigger.job?.url ?? '';\n\nif (!/^https?:\\/\\//.test(contextUrl)) {\n  throw new Error('Invalid context URL in webhook payload');\n}\n\nif (!/^https?:\\/\\//.test(callbackUrl)) {\n  throw new Error('Invalid callback URL in webhook payload');\n}\n\nif (!/^https?:\\/\\//.test(jobUrl)) {\n  throw new Error('Invalid job URL in webhook payload');\n}\n\nif (!automationSecret) {\n  throw new Error('Missing automation secret header on webhook request');\n}\n\nreturn [{\n  json: {\n    reason: trigger.reason ?? 'queued',\n    run: trigger.run ?? {},\n    job: trigger.job ?? {},\n    profile: trigger.profile ?? {},\n    app: trigger.app ?? {},\n    contextUrl,\n    callbackUrl,\n    jobUrl,\n    automationSecret,\n  },\n}];"
+        },
+        "id": "7f5a38f5-0e90-4a28-bbed-55b271752c4b",
+        "name": "Prepare Dispatch Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.contextUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              },
+              {
+                "name": "accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "61e7a17e-715d-468a-bb65-b22eb482902d",
+        "name": "Fetch Run Context",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          480,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const dispatch = $('Prepare Dispatch Input').item.json || {};\nconst context = $input.first().json || {};\nconst run = context.run || dispatch.run || {};\nconst job = run.job || dispatch.job || {};\nconst profile = context.profile || dispatch.profile || {};\nconst answers = run.answers || {};\nconst siteType = String(run.siteType || dispatch.run?.siteType || '').toUpperCase();\nconst jobUrl = job.url || dispatch.jobUrl || '';\nif (!jobUrl) {\n  throw new Error('Missing job URL for Anchor task');\n}\n\nconst answerLines = Object.entries(answers).length\n  ? Object.entries(answers).map(([question, answer]) => '- ' + question + ': ' + answer).join('\\n')\n  : '- none';\n\nconst resumeAvailable = Boolean(profile.resume?.base64);\nconst resumeLine = resumeAvailable\n  ? '- Resume file: available (' + (profile.resume.fileName || 'resume.pdf') + ', ' + (profile.resume.mimeType || 'application/pdf') + '). Use it if the site presents a real upload control. If upload is mandatory and cannot be completed, report needs_input.'\n  : '- Resume file: not available.';\n\nconst siteHintLines = [];\nif (siteType === 'COMEET' || /comeet\\.com/i.test(jobUrl)) {\n  siteHintLines.push('- This is likely a Comeet-hosted application. The page often starts as a job description page, not the form itself.');\n  siteHintLines.push('- Aggressively look for the primary apply CTA text, especially \"Apply for this job\", \"Apply\", \"Submit application\", or \"Start application\".');\n  siteHintLines.push('- The apply flow may open below the fold, in an embedded widget, in a modal, in a drawer, or inside an iframe. After each click, inspect all of those states before concluding the form is absent.');\n}\n\nconst prompt = [\n  'You are navigating a real job application on behalf of the user.',\n  '',\n  'Primary objective:',\n  '- Reach the actual application form.',\n  '- Fill it only with provided data.',\n  '- Submit only if the submission is clearly completed.',\n  '',\n  'Required procedure:',\n  '1. First decide whether the current page is already the application form or only a listing/details page.',\n  '2. If it is a listing/details page, locate the main application entry point before searching for form fields.',\n  '3. Search visible buttons and links for clear apply CTAs such as \"Apply for this job\", \"Apply\", \"Submit application\", or \"Start application\".',\n  '4. Scroll through the page and inspect the hero area, sticky sidebars, floating buttons, and lower sections if the main CTA is not immediately visible.',\n  '5. Click the strongest application CTA.',\n  '6. After every click, wait for the page state to change, then inspect for:',\n  '   - visible form fields',\n  '   - modal dialogs',\n  '   - drawers/slideover panels',\n  '   - embedded widgets',\n  '   - iframes',\n  '   - a new page or route',\n  '7. If the first likely application CTA does not open the form, try another clearly relevant application CTA before giving up.',\n  '8. Only say the form is missing after you can explain which CTAs you tried, what changed after each click, and what final page state you reached.',\n  '',\n  'Target job:',\n  '- Title: ' + (job.title || ''),\n  '- Company: ' + (job.company || ''),\n  '- URL: ' + jobUrl,\n  '',\n  'Applicant data:',\n  '- Full name: ' + (profile.fullName || ''),\n  '- Email: ' + (profile.email || ''),\n  '- Phone: ' + (profile.phone || ''),\n  '- LinkedIn: ' + (profile.linkedInUrl || ''),\n  '- GitHub: ' + (profile.githubUrl || ''),\n  '- Portfolio: ' + (profile.portfolioUrl || ''),\n  '- Preferred locations: ' + (profile.preferredLocations || ''),\n  '- Remote preference: ' + (profile.remotePreference || ''),\n  '- Visa status: ' + (profile.visaStatus || ''),\n  '- Years of experience: ' + (profile.yearsExperience ?? ''),\n  resumeLine,\n  '',\n  'Saved answers for this run:',\n  answerLines,\n  '',\n  'Rules:',\n  '- Do not invent missing answers.',\n  '- Use only the provided data and what is clearly visible on the page.',\n  '- If login, captcha, OTP, human verification, work authorization, or any unknown required answer blocks the flow, stop and report needs_input.',\n  '- If resume upload is mandatory and you cannot complete it with the current tool, report needs_input with inputField set to resume_upload.',\n  '- Return failed only for unrecoverable tool or site failures.',\n  '- In your final message, explain which application entry point you tried, what page state you reached, and what blocker remained.',\n  '',\n  ...siteHintLines,\n].join('\\n');\n\nreturn [{\n  json: {\n    ...dispatch,\n    ...context,\n    run,\n    job,\n    profile,\n    siteType,\n    jobUrl,\n    anchorPrompt: prompt,\n    maxPollAttempts: 8,\n    pollWaitSeconds: 20,\n  }\n}];"
+        },
+        "id": "cb0a46b3-7d22-4ed6-a39e-cf50f931097b",
+        "name": "Prepare Anchor Task",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          720,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={\"status\":\"RUNNING\",\"currentStep\":\"Preparing browser session\",\"message\":\"Preparing the browser session.\"}",
+          "options": {}
+        },
+        "id": "4644899b-9355-4352-9f1f-2c500600f37d",
+        "name": "Report Running",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          960,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "session",
+          "operation": "create",
+          "baseUrl": "https://api.anchorbrowser.io",
+          "sessionConfig": {
+            "initialUrl": "={{ $(\"Prepare Anchor Task\").item.json.jobUrl }}",
+            "idleTimeout": 10,
+            "maxDuration": 20,
+            "readOnlyLiveView": false,
+            "recordingActive": true
+          }
+        },
+        "id": "2ee3e56f-b25e-4c4c-98b6-e36da92ae4d9",
+        "name": "Anchor Create Session",
+        "type": "n8n-nodes-anchorbrowser.anchorBrowser",
+        "typeVersion": 1,
+        "position": [
+          1200,
+          0
+        ],
+        "credentials": {
+          "anchorBrowserApi": {
+            "id": "NSckG0gvCWFD3Xfy",
+            "name": "Anchor Browser account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.error ? { status: \"RUNNING\", currentStep: \"Browser session unavailable\", message: `Anchor session could not be created: ${$json.error}`, level: \"WARN\", payload: { anchor: { taskStatus: \"SESSION_CREATE_FAILED\", raw: $json } } } : { status: \"RUNNING\", currentStep: (($json.sessionId || $json.id || $json.data?.id) ? \"Browser session ready\" : \"Browser session started\"), message: (($json.sessionId || $json.id || $json.data?.id) ? \"Anchor session created.\" : \"Anchor started a session but did not return live session details.\"), level: (($json.sessionId || $json.id || $json.data?.id) ? \"INFO\" : \"WARN\"), payload: { anchor: { sessionId: $json.sessionId || $json.id || $json.data?.id || \"\", liveViewUrl: $json.liveViewUrl || $json.live_view_url || $json.data?.live_view_url || \"\", cdpUrl: $json.cdpUrl || $json.cdp_url || $json.data?.cdp_url || \"\", taskStatus: \"SESSION_CREATED\", raw: $json } } }) }}",
+          "options": {}
+        },
+        "id": "5f97a073-152b-4c8a-9b34-37362489eb1e",
+        "name": "Report Anchor Session",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1440,
+          -160
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "tools",
+          "operation": "performWebTask",
+          "sessionId": "={{ $(\"Anchor Create Session\").item.json.sessionId || $(\"Anchor Create Session\").item.json.id || $(\"Anchor Create Session\").item.json.data?.id || \"\" }}",
+          "baseUrl": "https://api.anchorbrowser.io",
+          "performWebTaskConfig": {
+            "agent": "browser-use",
+            "async": true,
+            "detectElements": true,
+            "extendedSystemMessage": "You are completing a real job application for the user. You must not pause waiting for human intervention. Instead, if a blocker appears, return it clearly in the final result. Before declaring that the form is missing, actively enter the application flow. On listing pages, prioritize the main apply CTA over all other actions. Look specifically for buttons or links labeled \"Apply for this job\", \"Apply\", \"Submit application\", or \"Start application\". Scroll if needed, inspect sticky sections and lower content, click the strongest application CTA, wait for state changes, and then inspect the resulting page, modal, drawer, embedded widget, and iframe for the real form. If the first likely application CTA does not open the form, try another relevant application CTA before stopping. Do not invent missing answers. If a login, captcha, OTP, human verification, work authorization question, or unknown required answer blocks progress, stop and report the blocker clearly.",
+            "highlightElements": false,
+            "humanIntervention": false,
+            "maxSteps": 50,
+            "model": "gpt-4o",
+            "prompt": "={{ $(\"Prepare Anchor Task\").item.json.anchorPrompt }}",
+            "provider": "openai",
+            "secretValues": "{}",
+            "useVision": true,
+            "outputSchema": "{\"type\":\"object\",\"properties\":{\"status\":{\"type\":\"string\",\"enum\":[\"submitted\",\"needs_input\",\"failed\"]},\"message\":{\"type\":\"string\"},\"blockingQuestion\":{\"type\":\"string\"},\"inputField\":{\"type\":\"string\"},\"pageState\":{\"type\":\"string\"},\"attemptedActions\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}}},\"required\":[\"status\",\"message\"]}",
+            "url": "={{ $(\"Prepare Anchor Task\").item.json.jobUrl }}"
+          }
+        },
+        "id": "a8fdf2df-aa7c-4101-95a0-1dcd86c5225b",
+        "name": "Anchor Perform Web Task",
+        "type": "n8n-nodes-anchorbrowser.anchorBrowser",
+        "typeVersion": 1,
+        "position": [
+          1440,
+          80
+        ],
+        "credentials": {
+          "anchorBrowserApi": {
+            "id": "NSckG0gvCWFD3Xfy",
+            "name": "Anchor Browser account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const source = $('Prepare Anchor Task').item.json || {};\nconst session = $('Anchor Create Session').item.json || {};\nconst task = $input.first().json || {};\nconst workflowId = task.data?.workflow_id || task.workflow_id || task.id || task.data?.id || '';\nif (!workflowId) {\n  throw new Error('Anchor did not return workflow_id for perform-web-task');\n}\n\nreturn [{\n  json: {\n    ...source,\n    pollAttempt: 0,\n    anchor: {\n      sessionId: session.sessionId || session.id || session.data?.id || '',\n      liveViewUrl: session.liveViewUrl || session.live_view_url || session.data?.live_view_url || '',\n      cdpUrl: session.cdpUrl || session.cdp_url || session.data?.cdp_url || '',\n      workflowId,\n      taskStatus: task.data?.status || task.status || 'RUNNING',\n      raw: task,\n    },\n  },\n}];"
+        },
+        "id": "3aa4badb-109b-4d30-bd1a-0c7d63d660b4",
+        "name": "Prepare Task Started",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1680,
+          80
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ status: \"RUNNING\", currentStep: \"Browser task started\", message: \"Anchor started the browser task.\", payload: { anchor: { sessionId: $json.anchor.sessionId, liveViewUrl: $json.anchor.liveViewUrl, cdpUrl: $json.anchor.cdpUrl, workflowId: $json.anchor.workflowId, taskStatus: $json.anchor.taskStatus } } }) }}",
+          "options": {}
+        },
+        "id": "4dc7e44d-68df-4761-af51-9bf01cde4cf1",
+        "name": "Report Anchor Task Started",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1920,
+          -80
+        ]
+      },
+      {
+        "parameters": {
+          "resume": "timeInterval",
+          "amount": 20,
+          "unit": "seconds"
+        },
+        "id": "2d76dd6e-2798-46c4-b985-4c41d34d31ef",
+        "name": "Wait Before Status Check",
+        "type": "n8n-nodes-base.wait",
+        "typeVersion": 1.1,
+        "position": [
+          1920,
+          120
+        ],
+        "webhooks": []
+      },
+      {
+        "parameters": {
+          "resource": "tools",
+          "operation": "getPerformWebTaskStatus",
+          "baseUrl": "https://api.anchorbrowser.io",
+          "workflowId": "={{ $(\"Wait Before Status Check\").item.json.anchor.workflowId }}"
+        },
+        "id": "fc0d2714-d2ae-4d7b-b4a8-0b00d8b320f3",
+        "name": "Anchor Get Task Status",
+        "type": "n8n-nodes-anchorbrowser.anchorBrowser",
+        "typeVersion": 1,
+        "position": [
+          2160,
+          120
+        ],
+        "credentials": {
+          "anchorBrowserApi": {
+            "id": "NSckG0gvCWFD3Xfy",
+            "name": "Anchor Browser account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const state = $('Wait Before Status Check').item.json || {};\nconst envelope = $input.first().json || {};\nconst taskStatus = envelope.data?.status || envelope.status || 'UNKNOWN';\nconst pollAttempt = Number(state.pollAttempt || 0) + 1;\nconst maxPollAttempts = Number(state.maxPollAttempts || 8);\n\nreturn [{\n  json: {\n    ...state,\n    pollAttempt,\n    exhausted: taskStatus === 'RUNNING' && pollAttempt >= maxPollAttempts,\n    shouldPoll: taskStatus === 'RUNNING' && pollAttempt < maxPollAttempts,\n    anchorResult: envelope.data?.result ?? envelope.result ?? null,\n    anchor: {\n      ...(state.anchor || {}),\n      taskStatus,\n      raw: envelope,\n    },\n  },\n}];"
+        },
+        "id": "c72f1e42-d2ab-4b20-a4bf-f72bd61e414b",
+        "name": "Evaluate Task Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2400,
+          120
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "daecb8eb-89dc-431a-987c-d4ba3f1b0ae7",
+                "leftValue": "={{ $json.shouldPoll }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true",
+                  "singleValue": true
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "44646597-b0ab-45d6-ac06-4e969c07fe64",
+        "name": "Should Continue Polling?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          2640,
+          120
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ status: \"RUNNING\", currentStep: \"Browser task still running\", message: `Anchor is still running (check ${$json.pollAttempt} of ${$json.maxPollAttempts}).`, payload: { anchor: { sessionId: $json.anchor.sessionId, liveViewUrl: $json.anchor.liveViewUrl, cdpUrl: $json.anchor.cdpUrl, workflowId: $json.anchor.workflowId, taskStatus: $json.anchor.taskStatus } } }) }}",
+          "options": {}
+        },
+        "id": "129f19f8-71d4-40c0-b750-40a0d04dd48d",
+        "name": "Report Poll Progress",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2880,
+          -20
+        ]
+      },
+      {
+        "parameters": {
+          "resource": "session",
+          "operation": "getRecordings",
+          "sessionId": "={{ $(\"Evaluate Task Status\").item.json.anchor.sessionId }}",
+          "baseUrl": "https://api.anchorbrowser.io"
+        },
+        "id": "f1983b1e-6cae-4cb4-bac1-cbc774c92f17",
+        "name": "Anchor Get Session Recordings",
+        "type": "n8n-nodes-anchorbrowser.anchorBrowser",
+        "typeVersion": 1,
+        "position": [
+          2880,
+          260
+        ],
+        "credentials": {
+          "anchorBrowserApi": {
+            "id": "NSckG0gvCWFD3Xfy",
+            "name": "Anchor Browser account"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const state = $('Evaluate Task Status').item.json || {};\nconst recordingsEnvelope = $input.first().json || {};\nconst status = state.anchor?.taskStatus || 'UNKNOWN';\nconst raw = state.anchor?.raw;\nconst result = state.anchorResult;\n\nfunction extractRecordingUrls(input) {\n  const queue = [input];\n  const urls = [];\n  while (queue.length) {\n    const value = queue.shift();\n    if (!value) continue;\n    if (typeof value === 'string') {\n      if (/^https?:\\/\\//i.test(value)) urls.push(value);\n      continue;\n    }\n    if (Array.isArray(value)) {\n      queue.push(...value);\n      continue;\n    }\n    if (typeof value === 'object') {\n      for (const [key, nested] of Object.entries(value)) {\n        if ((key.toLowerCase().includes('url') || key.toLowerCase().includes('recording')) && typeof nested === 'string' && /^https?:\\/\\//i.test(nested)) {\n          urls.push(nested);\n        } else {\n          queue.push(nested);\n        }\n      }\n    }\n  }\n  return Array.from(new Set(urls));\n}\n\nconst recordings = extractRecordingUrls(recordingsEnvelope);\nconst anchorPayload = {\n  sessionId: state.anchor?.sessionId,\n  workflowId: state.anchor?.workflowId,\n  liveViewUrl: state.anchor?.liveViewUrl,\n  cdpUrl: state.anchor?.cdpUrl,\n  taskStatus: status,\n  recordings,\n  raw,\n};\n\nconst serialized = JSON.stringify({ raw, result }).toLowerCase();\nconst keywordNeedsInput = /(captcha|human verification|verify you are human|otp|two-factor|2fa|login|sign in|authorization|work authorization|resume upload|upload.*resume|required file|manual attention)/i;\nconst extractedError = typeof raw?.error === 'string'\n  ? raw.error\n  : raw?.error?.message || raw?.data?.error || raw?.message || null;\n\nlet finalPayload;\nlet parsed = result;\nif (typeof parsed === 'string') {\n  try { parsed = JSON.parse(parsed); } catch {}\n}\n\nif (status === 'FAILED') {\n  finalPayload = {\n    status: 'FAILED',\n    currentStep: 'Automation failed',\n    lastError: extractedError || 'Anchor reported a failed browser task.',\n    message: extractedError || 'Anchor reported a failed browser task.',\n    level: 'ERROR',\n    payload: { anchor: anchorPayload },\n  };\n} else if (status === 'RUNNING') {\n  finalPayload = {\n    status: 'NEEDS_INPUT',\n    needsInput: true,\n    currentStep: 'Browser task still running',\n    blockingQuestion: 'Anchor is still running after multiple checks. Open the live view or recording to inspect what is blocking the application.',\n    inputField: 'manual_review',\n    message: 'Anchor is still running after the configured wait window.',\n    level: 'WARN',\n    payload: { anchor: anchorPayload },\n  };\n} else if ((parsed && (parsed.status === 'submitted' || parsed.status === 'success')) || /submitted successfully/.test(serialized)) {\n  finalPayload = {\n    status: 'SUBMITTED',\n    currentStep: 'Application submitted',\n    message: parsed?.message || 'Application submitted successfully.',\n    payload: { anchor: anchorPayload },\n  };\n} else if ((parsed && parsed.status === 'needs_input') || keywordNeedsInput.test(serialized)) {\n  const inferredInputField = parsed?.inputField || (serialized.includes('resume') ? 'resume_upload' : serialized.includes('captcha') || serialized.includes('human verification') ? 'human_verification' : serialized.includes('login') || serialized.includes('sign in') ? 'login' : serialized.includes('authorization') ? 'work_authorization' : 'manual_review');\n  finalPayload = {\n    status: 'NEEDS_INPUT',\n    needsInput: true,\n    currentStep: 'Waiting for user attention',\n    blockingQuestion: parsed?.blockingQuestion || parsed?.message || 'This application needs manual attention to continue.',\n    inputField: inferredInputField,\n    message: parsed?.message || 'Manual attention is required to continue this application.',\n    level: 'WARN',\n    payload: { anchor: anchorPayload },\n  };\n} else {\n  finalPayload = {\n    status: 'FAILED',\n    currentStep: 'Automation failed',\n    lastError: extractedError || parsed?.message || 'The browser tool could not complete the application.',\n    message: parsed?.message || extractedError || 'Automation could not complete the application.',\n    level: 'ERROR',\n    payload: { anchor: anchorPayload },\n  };\n}\n\nreturn [{ json: { finalPayload } }];"
+        },
+        "id": "7037e124-a460-43cf-a3e2-ac379b473b5e",
+        "name": "Prepare Final Callback",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          3120,
+          260
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json.finalPayload) }}",
+          "options": {}
+        },
+        "id": "62600da7-eb75-446e-9e0b-3cc640f69e79",
+        "name": "Report Final Status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          3360,
+          260
+        ]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Prepare Dispatch Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Dispatch Input": {
+        "main": [
+          [
+            {
+              "node": "Fetch Run Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Run Context": {
+        "main": [
+          [
+            {
+              "node": "Prepare Anchor Task",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Anchor Task": {
+        "main": [
+          [
+            {
+              "node": "Report Running",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Report Running": {
+        "main": [
+          [
+            {
+              "node": "Anchor Create Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anchor Create Session": {
+        "main": [
+          [
+            {
+              "node": "Report Anchor Session",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Anchor Perform Web Task",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anchor Perform Web Task": {
+        "main": [
+          [
+            {
+              "node": "Prepare Task Started",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Task Started": {
+        "main": [
+          [
+            {
+              "node": "Report Anchor Task Started",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Wait Before Status Check",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Wait Before Status Check": {
+        "main": [
+          [
+            {
+              "node": "Anchor Get Task Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anchor Get Task Status": {
+        "main": [
+          [
+            {
+              "node": "Evaluate Task Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Evaluate Task Status": {
+        "main": [
+          [
+            {
+              "node": "Should Continue Polling?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Should Continue Polling?": {
+        "main": [
+          [
+            {
+              "node": "Report Poll Progress",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Wait Before Status Check",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Anchor Get Session Recordings",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Anchor Get Session Recordings": {
+        "main": [
+          [
+            {
+              "node": "Prepare Final Callback",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Final Callback": {
+        "main": [
+          [
+            {
+              "node": "Report Final Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "callerPolicy": "workflowsFromSameOwner",
+      "availableInMCP": false
+    },
+    "meta": {
+      "templateCredsSetupCompleted": true
+    },
+    "pinData": {}
+  }
+]

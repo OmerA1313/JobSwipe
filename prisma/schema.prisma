@@ -31,20 +31,25 @@ model UserProfile {
 }
 
 model JobPosting {
-  id          Int          @id @default(autoincrement())
-  externalId  String       @unique
-  title       String
-  company     String
-  location    String
-  isRemote    Boolean      @default(false)
-  salaryMin   Int?
-  salaryMax   Int?
-  url         String
-  summary     String
-  source      String       @default("mock")
-  createdAt   DateTime     @default(now())
-  decisions   JobDecision[]
-  application Application?
+  id                     Int             @id @default(autoincrement())
+  externalId             String          @unique
+  title                  String
+  company                String
+  location               String
+  isRemote               Boolean         @default(false)
+  salaryMin              Int?
+  salaryMax              Int?
+  url                    String
+  summary                String
+  source                 String          @default("mock")
+  llmDescriptionBullets  String?
+  llmRequirementsBullets String?
+  llmSummaryHash         String?
+  llmModel               String?
+  llmEnrichedAt          DateTime?
+  createdAt              DateTime        @default(now())
+  decisions              JobDecision[]
+  application            Application?
   automationRuns AutomationRun[]
 }
 
@@ -81,6 +86,7 @@ model AutomationRun {
   needsInput        Boolean           @default(false)
   blockingQuestion  String?
   inputField        String?
+  answersJson       String?
   lastError         String?
   startedAt         DateTime?
   finishedAt        DateTime?

@@ -1,5 +1,6 @@
 import type { JobPosting, UserProfile } from "@prisma/client";
 import { sanitizeText } from "@/lib/job-sources/utils";
+import { parseCachedBullets } from "@/lib/job-summary-llm";
 
 type RankOptions = {
   strictLocation?: boolean;
@@ -863,6 +864,39 @@ const REQUIREMENT_HINTS = [
   "bonus"
 ];
 
+const DESCRIPTION_SECTION_HEADINGS = [
+  "what you'll do",
+  "what you ll do",
+  "what you will do",
+  "responsibilities",
+  "job description",
+  "about the job",
+  "about the role",
+  "role overview",
+  "what you will be doing",
+  "what you’ll be doing",
+  "what you'll be working on",
+  "day to day",
+  "your impact"
+];
+
+const REQUIREMENT_SECTION_HEADINGS = [
+  "what you'll bring",
+  "what you ll bring",
+  "what you will bring",
+  "requirements",
+  "qualifications",
+  "must have",
+  "basic qualifications",
+  "what we're looking for",
+  "what we re looking for",
+  "what we are looking for",
+  "you should have",
+  "skills and experience",
+  "who you are",
+  "what makes you a fit"
+];
+
 function splitSummarySegments(text: string) {
   const cleaned = sanitizeText(text);
   if (!cleaned) return [];
@@ -872,6 +906,42 @@ function splitSummarySegments(text: string) {
     .split(/(?:\.\s+|;\s+|\n+)/g)
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildHeadingRegex(headings: string[]) {
+  return new RegExp(
+    `(?:^|[.:;\\-\\n]\\s*)(${headings.map((heading) => escapeRegex(heading)).join("|")})\\s*[:\\-]?\\s*`,
+    "ig"
+  );
+}
+
+function extractSectionSegments(text: string, headings: string[]) {
+  const cleaned = sanitizeText(text);
+  if (!cleaned) return [];
+
+  const headingRegex = buildHeadingRegex(headings);
+  const matches = Array.from(cleaned.matchAll(headingRegex));
+  if (matches.length === 0) return [];
+
+  const combinedHeadingRegex = buildHeadingRegex([...DESCRIPTION_SECTION_HEADINGS, ...REQUIREMENT_SECTION_HEADINGS]);
+  const sections: string[] = [];
+
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const start = (match.index ?? 0) + match[0].length;
+    const remainder = cleaned.slice(start);
+    const nextMatch = combinedHeadingRegex.exec(remainder);
+    const rawSection = (nextMatch ? remainder.slice(0, nextMatch.index ?? 0) : remainder).trim();
+    combinedHeadingRegex.lastIndex = 0;
+    if (!rawSection) continue;
+    sections.push(...splitSummarySegments(rawSection));
+  }
+
+  return sections;
 }
 
 function normalizeSegmentKey(segment: string) {
@@ -917,6 +987,22 @@ function normalizeRequirementSegment(segment: string) {
     .trim();
 }
 
+function isUsefulBullet(segment: string) {
+  const normalized = normalizeText(segment);
+  if (!normalized) return false;
+  if (normalized.length < 8) return false;
+  if (
+    normalized === "apply" ||
+    normalized === "save" ||
+    normalized === "share" ||
+    normalized === "show more" ||
+    normalized === "show less"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function stripListingFreshness(value: string) {
   return value
     .replace(/\(\s*\d+\s+(?:day|week|month|year)s?\s+ago\s*\)$/i, "")
@@ -927,31 +1013,33 @@ function stripListingFreshness(value: string) {
 function extractDescriptionHighlights(job: JobSummaryInput) {
   const highlights: string[] = [];
   const seen = new Set<string>();
-  const maxHighlights = 5;
+  const maxHighlights = 3;
 
-  splitSummarySegments(job.summary)
-    .filter((segment) => !isRequirementSegment(segment))
+  extractSectionSegments(job.summary, DESCRIPTION_SECTION_HEADINGS)
     .map((segment) => cleanDescriptionSegment(segment))
-    .filter((segment) => segment.length >= 12)
+    .filter((segment) => isUsefulBullet(segment) && !isRequirementSegment(segment))
     .forEach((segment) => {
       const key = normalizeSegmentKey(segment);
       if (!key || seen.has(key) || highlights.length >= maxHighlights) return;
       seen.add(key);
-      highlights.push(truncateSummary(segment, 120));
+      highlights.push(truncateSummary(segment, 110));
     });
 
-  appendUnique(highlights, seen, job.company ? `${job.title} at ${job.company}` : job.title, maxHighlights);
-  appendUnique(highlights, seen, job.location ? `Location: ${job.location}` : undefined, maxHighlights);
-  appendUnique(
-    highlights,
-    seen,
-    job.isRemote ? job.remoteSignal ?? "Work mode: remote-friendly" : "Work mode: on-site or hybrid",
-    maxHighlights
-  );
-  appendUnique(highlights, seen, job.source ? `Source: ${job.source}` : undefined, maxHighlights);
+  if (highlights.length < maxHighlights) {
+    splitSummarySegments(job.summary)
+      .filter((segment) => !isRequirementSegment(segment))
+      .map((segment) => cleanDescriptionSegment(segment))
+      .filter((segment) => isUsefulBullet(segment))
+      .forEach((segment) => {
+        const key = normalizeSegmentKey(segment);
+        if (!key || seen.has(key) || highlights.length >= maxHighlights) return;
+        seen.add(key);
+        highlights.push(truncateSummary(segment, 110));
+      });
+  }
 
   if (highlights.length === 0) {
-    highlights.push(truncateSummary(`${job.title}${job.isRemote ? " with remote-friendly setup" : ""}.`, 120));
+    appendUnique(highlights, seen, job.company ? `${job.title} at ${job.company}` : job.title, maxHighlights, 110);
   }
 
   return highlights.slice(0, maxHighlights);
@@ -967,7 +1055,7 @@ function extractRequirementsSummary(job: JobSummaryInput, matchReasons: string[]
   const target = normalizeText(`${job.title} ${job.summary}`);
   const requirements: string[] = [];
   const seen = new Set<string>();
-  const maxRequirements = 5;
+  const maxRequirements = 3;
   const inferredSeniority =
     job.senioritySignal ??
     (() => {
@@ -975,46 +1063,42 @@ function extractRequirementsSummary(job: JobSummaryInput, matchReasons: string[]
       return inferred.level === "unknown" ? undefined : toTitleCase(inferred.level);
     })();
 
-  const fromDescription = splitSummarySegments(job.summary)
-    .filter((segment) => isRequirementSegment(segment))
+  extractSectionSegments(job.summary, REQUIREMENT_SECTION_HEADINGS)
     .map((segment) => normalizeRequirementSegment(segment))
-    .filter((segment) => segment.length >= 8)
-    .slice(0, maxRequirements);
+    .filter((segment) => isUsefulBullet(segment))
+    .forEach((segment) => {
+      const key = normalizeSegmentKey(segment);
+      if (!key || seen.has(key) || requirements.length >= maxRequirements) return;
+      seen.add(key);
+      requirements.push(truncateSummary(segment, 110));
+    });
 
-  fromDescription.forEach((segment) => {
-    const key = normalizeText(segment);
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    requirements.push(truncateSummary(segment, 120));
-  });
+  if (requirements.length < maxRequirements) {
+    splitSummarySegments(job.summary)
+      .filter((segment) => isRequirementSegment(segment))
+      .map((segment) => normalizeRequirementSegment(segment))
+      .filter((segment) => isUsefulBullet(segment))
+      .forEach((segment) => {
+        const key = normalizeText(segment);
+        if (!key || seen.has(key) || requirements.length >= maxRequirements) return;
+        seen.add(key);
+        requirements.push(truncateSummary(segment, 110));
+      });
+  }
 
   const minYears = extractMinimumYears(`${job.title} ${job.summary}`);
   if (typeof minYears === "number" && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, `Experience: ${minYears}+ years`, maxRequirements);
+    appendUnique(requirements, seen, `${minYears}+ years of experience`, maxRequirements, 110);
   }
 
   const skills = TECH_SKILL_TERMS.filter((term) => target.includes(term)).slice(0, Math.max(0, maxRequirements - requirements.length));
   if (skills.length > 0 && requirements.length < maxRequirements) {
     const labels = skills.map((skill) => TECH_SKILL_LABELS[skill] ?? toTitleCase(skill));
-    appendUnique(requirements, seen, `Stack: ${labels.join(", ")}`, maxRequirements);
-  }
-
-  if (target.includes("degree") && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, "Education: degree mentioned", maxRequirements);
+    appendUnique(requirements, seen, labels.join(", "), maxRequirements, 110);
   }
 
   if (inferredSeniority && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, `Level: ${inferredSeniority}`, maxRequirements);
-  }
-
-  if (job.location && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, `Location: ${job.location}`, maxRequirements);
-  }
-
-  if (job.remoteSignal && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, `Work mode: ${job.remoteSignal}`, maxRequirements);
-  } else if (job.isRemote && requirements.length < maxRequirements) {
-    appendUnique(requirements, seen, "Work mode: remote-friendly", maxRequirements);
+    appendUnique(requirements, seen, `${inferredSeniority} level`, maxRequirements, 110);
   }
 
   if (requirements.length === 0) {
@@ -1028,7 +1112,7 @@ function extractRequirementsSummary(job: JobSummaryInput, matchReasons: string[]
   }
 
   if (requirements.length === 0) {
-    requirements.push("No explicit requirements provided by source");
+    requirements.push("No clear requirements were provided in the listing");
   }
 
   return requirements.slice(0, maxRequirements);
@@ -1074,7 +1158,10 @@ export function rankJobsForFeed(profile: UserProfile, jobs: JobPosting[], option
         senioritySignal: match.signals.seniority,
         remoteSignal: match.signals.remote
       };
-      const descriptionSummary = extractDescriptionSummary(cardInput);
+      const cachedBullets = parseCachedBullets(job.llmDescriptionBullets, job.llmRequirementsBullets);
+      const descriptionHighlights = cachedBullets?.descriptionBullets ?? extractDescriptionHighlights(cardInput);
+      const requirementsSummary = cachedBullets?.requirementBullets ?? extractRequirementsSummary(cardInput, match.reasons);
+      const descriptionSummary = descriptionHighlights[0] ?? extractDescriptionSummary(cardInput);
 
       return {
         id: job.id,
@@ -1086,8 +1173,8 @@ export function rankJobsForFeed(profile: UserProfile, jobs: JobPosting[], option
         summary: cardInput.summary,
         cardSummary: descriptionSummary,
         descriptionSummary,
-        descriptionHighlights: extractDescriptionHighlights(cardInput),
-        requirementsSummary: extractRequirementsSummary(cardInput, match.reasons),
+        descriptionHighlights,
+        requirementsSummary,
         url: job.url,
         score: match.score,
         whyMatched: match.reasons,

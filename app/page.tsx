@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 type Profile = {
   fullName?: string;
@@ -70,19 +70,51 @@ type AutomationRunItem = {
   status: string;
   currentStep?: string | null;
   needsInput: boolean;
+  requiresManualAttention?: boolean;
   blockingQuestion?: string | null;
   inputField?: string | null;
+  answers?: Record<string, string>;
   lastError?: string | null;
+  manualActionUrl?: string;
   startedAt?: string | null;
   finishedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  debug?: {
+    anchor?: {
+      sessionId?: string;
+      workflowId?: string;
+      liveViewUrl?: string;
+      cdpUrl?: string;
+      taskStatus?: string;
+      recordings?: string[];
+      raw?: unknown;
+    } | null;
+    browserbase?: {
+      sessionId?: string;
+      sessionUrl?: string;
+      replayUrl?: string;
+      taskStatus?: string;
+      completed?: boolean;
+      actions?: unknown[];
+      usage?: unknown;
+      raw?: unknown;
+    } | null;
+  };
   latestEvent?: {
     id: number;
     level: string;
     message: string;
     createdAt: string;
+    payload?: unknown;
   } | null;
+  events?: Array<{
+    id: number;
+    level: string;
+    message: string;
+    createdAt: string;
+    payload?: unknown;
+  }>;
   job: {
     id: number;
     title: string;
@@ -106,6 +138,36 @@ type ApiResult<T> =
       status?: number;
     };
 
+type DevSettings = {
+  aiSummariesEnabled: boolean;
+  aiMaxJobs: number;
+};
+
+type RefreshSnapshot = {
+  fetched: number;
+  totalJobs?: number;
+  sourceCounts: Record<string, number>;
+  errors: string[];
+  llm?: {
+    enabled: boolean;
+    provider?: string | null;
+    updated: number;
+    scanned: number;
+    errors: string[];
+  };
+};
+
+type AutomationReadyJob = {
+  id: number;
+  title: string;
+  company: string;
+  location: string;
+  source?: string;
+  url: string;
+  siteType: string;
+  latestRunStatus?: string | null;
+};
+
 const SWIPE_X_THRESHOLD = 110;
 const SWIPE_Y_THRESHOLD = 130;
 const SWIPE_ANIMATION_MS = 180;
@@ -120,6 +182,8 @@ const missingFieldLabels: Record<string, string> = {
   resumeFile: "resume PDF file",
   resumeFilePdf: "resume must be a PDF"
 };
+const DEV_TOOLS_ENABLED = process.env.NEXT_PUBLIC_DEV_TOOLS === "1";
+const DEV_SETTINGS_STORAGE_KEY = "jobSwipe.devSettings";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -144,6 +208,16 @@ function waitForNextPaint(frames = 1) {
 
     tick(frames);
   });
+}
+
+function stringifyDebugValue(value: unknown) {
+  if (value === undefined || value === null) return "";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 async function fetchJsonWithRetry<T>(url: string, init?: RequestInit, retries = 2): Promise<ApiResult<T>> {
@@ -208,7 +282,7 @@ async function fetchJsonWithRetry<T>(url: string, init?: RequestInit, retries = 
 }
 
 export default function HomePage() {
-  const [activeTab, setActiveTab] = useState<"preferences" | "feed" | "tracking">("feed");
+  const [activeTab, setActiveTab] = useState<"preferences" | "feed" | "tracking" | "dev">("feed");
   const [profile, setProfile] = useState<Profile>({
     remotePreference: "hybrid",
     seniorityPreference: "any",
@@ -239,9 +313,24 @@ export default function HomePage() {
   const [preferredLocationDraft, setPreferredLocationDraft] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
   const [availableSources, setAvailableSources] = useState<string[]>([]);
+  const [showFullDescription, setShowFullDescription] = useState(false);
+  const [showFullRequirements, setShowFullRequirements] = useState(false);
+  const [devSettings, setDevSettings] = useState<DevSettings>({
+    aiSummariesEnabled: false,
+    aiMaxJobs: 10
+  });
+  const [lastRefreshSnapshot, setLastRefreshSnapshot] = useState<RefreshSnapshot | null>(null);
+  const [automationReadyJobs, setAutomationReadyJobs] = useState<AutomationReadyJob[]>([]);
+  const [automationPreviewJobId, setAutomationPreviewJobId] = useState<number | null>(null);
+  const [runAnswerDrafts, setRunAnswerDrafts] = useState<Record<number, string>>({});
+  const [answeringRunId, setAnsweringRunId] = useState<number | null>(null);
+  const [actingRunId, setActingRunId] = useState<number | null>(null);
+  const [expandedRunId, setExpandedRunId] = useState<number | null>(null);
+  const [runDetailsById, setRunDetailsById] = useState<Record<number, AutomationRunItem>>({});
+  const [loadingRunDetailsId, setLoadingRunDetailsId] = useState<number | null>(null);
   const topCardRef = useRef<HTMLElement | null>(null);
   const deckRef = useRef<HTMLDivElement | null>(null);
-  const hasLoadedFeedRef = useRef(false);
+  const feedRequestIdRef = useRef(0);
   const dragStateRef = useRef<{
     active: boolean;
     pointerId: number | null;
@@ -259,6 +348,28 @@ export default function HomePage() {
   });
   const dragFrameRef = useRef<number | null>(null);
   const leavingSwipeTimeoutRef = useRef<number | null>(null);
+
+  async function loadAutomationRunsSnapshot() {
+    const automationRunsResult = await fetchJsonWithRetry<{ runs: AutomationRunItem[] }>("/api/automation-runs");
+    if (!automationRunsResult.ok) {
+      throw new Error(automationRunsResult.message || "Failed to load apply tasks");
+    }
+
+    setAutomationRuns(automationRunsResult.data.runs);
+    setRunDetailsById((prev) => {
+      const next = { ...prev };
+      for (const run of automationRunsResult.data.runs) {
+        if (next[run.id]) {
+          next[run.id] = {
+            ...next[run.id],
+            ...run,
+            events: next[run.id].events
+          };
+        }
+      }
+      return next;
+    });
+  }
 
   async function loadProfileAndApplications() {
     const [profileResult, applicationsResult, automationRunsResult] = await Promise.all([
@@ -280,20 +391,34 @@ export default function HomePage() {
     setPendingResumeUpload(null);
     setApplications(applicationsResult.data.applications);
     setAutomationRuns(automationRunsResult.data.runs);
+    setRunDetailsById((prev) => {
+      const next = { ...prev };
+      for (const run of automationRunsResult.data.runs) {
+        if (next[run.id]) {
+          next[run.id] = {
+            ...next[run.id],
+            ...run,
+            events: next[run.id].events
+          };
+        }
+      }
+      return next;
+    });
   }
 
   async function loadFeed() {
-    const params = new URLSearchParams();
-    if (sourceFilter !== "all") {
-      params.set("source", sourceFilter);
-    }
-    const suffix = params.toString() ? `?${params.toString()}` : "";
+    const requestId = feedRequestIdRef.current + 1;
+    feedRequestIdRef.current = requestId;
     const feedResult = await fetchJsonWithRetry<{ jobs: FeedJob[]; availableSources?: string[]; message?: string }>(
-      `/api/jobs/feed${suffix}`
+      "/api/jobs/feed"
     );
 
     if (!feedResult.ok) {
       throw new Error(feedResult.message || "Failed to load feed");
+    }
+
+    if (requestId !== feedRequestIdRef.current) {
+      return;
     }
 
     setFeed(feedResult.data.jobs);
@@ -302,15 +427,71 @@ export default function HomePage() {
         ? feedResult.data.availableSources.map((source) => source.trim()).filter(Boolean)
         : []
     );
-    hasLoadedFeedRef.current = true;
+  }
+
+  async function loadAutomationReadyJobs() {
+    const result = await fetchJsonWithRetry<{ jobs: AutomationReadyJob[] }>("/api/automation-ready-jobs");
+    if (!result.ok) {
+      throw new Error(result.message || "Failed to load automation-ready jobs");
+    }
+    setAutomationReadyJobs(result.data.jobs);
+    setAutomationPreviewJobId((current) => current ?? result.data.jobs[0]?.id ?? null);
+  }
+
+  function upsertAutomationRun(run: AutomationRunItem) {
+    setAutomationRuns((prev) => [run, ...prev.filter((item) => item.id !== run.id)]);
+    setRunDetailsById((prev) => {
+      if (!prev[run.id]) return prev;
+      return {
+        ...prev,
+        [run.id]: {
+          ...prev[run.id],
+          ...run,
+          events: prev[run.id].events
+        }
+      };
+    });
+  }
+
+  async function loadRunDetails(runId: number, force = false) {
+    if (!force && runDetailsById[runId]) return;
+    setLoadingRunDetailsId(runId);
+    try {
+      const result = await fetchJsonWithRetry<{ run: AutomationRunItem }>(`/api/automation-runs/${runId}`);
+      if (!result.ok) {
+        setStatus(result.message || "Failed to load apply task details");
+        return;
+      }
+
+      setRunDetailsById((prev) => ({ ...prev, [runId]: result.data.run }));
+      setAutomationRuns((prev) =>
+        prev.map((item) => (item.id === runId ? { ...item, ...result.data.run, events: result.data.run.events } : item))
+      );
+    } finally {
+      setLoadingRunDetailsId((current) => (current === runId ? null : current));
+    }
+  }
+
+  async function toggleRunDetails(runId: number) {
+    if (expandedRunId === runId) {
+      setExpandedRunId(null);
+      return;
+    }
+
+    setExpandedRunId(runId);
+    await loadRunDetails(runId, true);
   }
 
   async function loadAll() {
     if (AUTO_RESET_TEST_QUEUE) {
       await resetQueue(false);
     }
-    const [profileResult, feedResult] = await Promise.allSettled([loadProfileAndApplications(), loadFeed()]);
-    const failures = [profileResult, feedResult]
+    const [profileResult, feedResult, automationReadyResult] = await Promise.allSettled([
+      loadProfileAndApplications(),
+      loadFeed(),
+      loadAutomationReadyJobs()
+    ]);
+    const failures = [profileResult, feedResult, automationReadyResult]
       .filter((result): result is PromiseRejectedResult => result.status === "rejected")
       .map((result) => (result.reason instanceof Error ? result.reason.message : "Unknown API error"));
 
@@ -327,17 +508,66 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (!hasLoadedFeedRef.current) return;
-    loadFeed().catch((error) => setStatus(error.message));
-  }, [sourceFilter]);
+    const hasActiveRuns = automationRuns.some((run) => run.status === "QUEUED" || run.status === "RUNNING");
+    if (activeTab !== "tracking" && !hasActiveRuns) {
+      return;
+    }
 
-  const topJob = useMemo(() => feed[0], [feed]);
-  const queuedJobs = useMemo(() => feed.slice(1, 3), [feed]);
+    const interval = window.setInterval(() => {
+      loadAutomationRunsSnapshot().catch(() => undefined);
+      if (expandedRunId !== null) {
+        void loadRunDetails(expandedRunId, true);
+      }
+    }, 8000);
+
+    return () => window.clearInterval(interval);
+  }, [activeTab, automationRuns, expandedRunId]);
+
+  useEffect(() => {
+    if (!DEV_TOOLS_ENABLED) return;
+    try {
+      const raw = window.localStorage.getItem(DEV_SETTINGS_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<DevSettings>;
+      setDevSettings((prev) => ({
+        aiSummariesEnabled:
+          typeof parsed.aiSummariesEnabled === "boolean" ? parsed.aiSummariesEnabled : prev.aiSummariesEnabled,
+        aiMaxJobs:
+          typeof parsed.aiMaxJobs === "number" && parsed.aiMaxJobs > 0 ? Math.min(Math.floor(parsed.aiMaxJobs), 100) : prev.aiMaxJobs
+      }));
+    } catch {
+      // ignore invalid local dev settings
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!DEV_TOOLS_ENABLED) return;
+    window.localStorage.setItem(DEV_SETTINGS_STORAGE_KEY, JSON.stringify(devSettings));
+  }, [devSettings]);
+
+  const filteredFeed = useMemo(
+    () => (sourceFilter === "all" ? feed : feed.filter((job) => (job.source ?? "").trim().toLowerCase() === sourceFilter)),
+    [feed, sourceFilter]
+  );
+  const automationPreviewJob = useMemo(
+    () => automationReadyJobs.find((job) => job.id === automationPreviewJobId) ?? automationReadyJobs[0] ?? null,
+    [automationPreviewJobId, automationReadyJobs]
+  );
+  const topJob = useMemo(() => filteredFeed[0], [filteredFeed]);
+  const queuedJobs = useMemo(() => filteredFeed.slice(1, 3), [filteredFeed]);
   const topDescriptionBullets = useMemo(
     () => toBulletItems(topJob?.descriptionHighlights, topJob?.descriptionSummary ?? topJob?.cardSummary ?? topJob?.summary),
     [topJob]
   );
   const topRequirementBullets = useMemo(() => toBulletItems(topJob?.requirementsSummary), [topJob]);
+  const visibleDescriptionBullets = useMemo(
+    () => (showFullDescription ? topDescriptionBullets : topDescriptionBullets.slice(0, 2)),
+    [showFullDescription, topDescriptionBullets]
+  );
+  const visibleRequirementBullets = useMemo(
+    () => (showFullRequirements ? topRequirementBullets : topRequirementBullets.slice(0, 2)),
+    [showFullRequirements, topRequirementBullets]
+  );
   const leavingDescriptionBullets = useMemo(
     () =>
       toBulletItems(
@@ -387,6 +617,8 @@ export default function HomePage() {
   useEffect(() => {
     resetDragVisuals();
     setIsDragging(false);
+    setShowFullDescription(false);
+    setShowFullRequirements(false);
   }, [topJob?.id]);
 
   useEffect(() => {
@@ -629,12 +861,24 @@ export default function HomePage() {
       const result = await fetchJsonWithRetry<{
         message?: string;
         fetched?: number;
+        totalJobs?: number;
         sourcesUsed?: string[];
         errors?: string[];
         sourceCounts?: Record<string, number>;
+        llm?: {
+          enabled: boolean;
+          provider?: string | null;
+          updated?: number;
+          scanned?: number;
+          errors?: string[];
+        };
       }>("/api/jobs/refresh", {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          aiSummariesEnabled: DEV_TOOLS_ENABLED ? devSettings.aiSummariesEnabled : undefined,
+          aiMaxJobs: DEV_TOOLS_ENABLED ? devSettings.aiMaxJobs : undefined
+        })
       });
 
       if (!result.ok) {
@@ -643,6 +887,21 @@ export default function HomePage() {
       }
 
       const payload = result.data;
+      setLastRefreshSnapshot({
+        fetched: typeof payload.fetched === "number" ? payload.fetched : 0,
+        totalJobs: typeof payload.totalJobs === "number" ? payload.totalJobs : undefined,
+        sourceCounts: payload.sourceCounts ?? {},
+        errors: Array.isArray(payload.errors) ? payload.errors : [],
+        llm: payload.llm
+          ? {
+              enabled: Boolean(payload.llm.enabled),
+              provider: typeof payload.llm.provider === "string" ? payload.llm.provider : undefined,
+              updated: typeof payload.llm.updated === "number" ? payload.llm.updated : 0,
+              scanned: typeof payload.llm.scanned === "number" ? payload.llm.scanned : 0,
+              errors: Array.isArray(payload.llm.errors) ? payload.llm.errors : []
+            }
+          : undefined
+      });
       await loadAll();
 
       const fetched = typeof payload.fetched === "number" ? payload.fetched : 0;
@@ -806,6 +1065,74 @@ export default function HomePage() {
     transition: isDragging ? "none" : `transform 160ms ease, box-shadow 160ms ease`
   } as const;
 
+  function handleSourceFilterChange(nextSource: string) {
+    if (nextSource === sourceFilter) return;
+    setSourceFilter(nextSource);
+    setLeavingSwipe(null);
+    resetDragVisuals();
+    setStatus("Ready");
+  }
+
+  async function submitRunAnswer(run: AutomationRunItem) {
+    const answer = (runAnswerDrafts[run.id] ?? "").trim();
+    if (!answer || answeringRunId === run.id) return;
+
+    setAnsweringRunId(run.id);
+    setStatus("Saving answer...");
+    try {
+      const result = await fetchJsonWithRetry<{ run: AutomationRunItem }>(`/api/automation-runs/${run.id}/answer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer })
+      });
+
+      if (!result.ok) {
+        setStatus(result.message || "Failed to save answer");
+        return;
+      }
+
+      upsertAutomationRun(result.data.run);
+      setRunAnswerDrafts((prev) => {
+        const next = { ...prev };
+        delete next[run.id];
+        return next;
+      });
+      setStatus("Answer saved. Run re-queued.");
+    } finally {
+      setAnsweringRunId(null);
+    }
+  }
+
+  async function performRunAction(run: AutomationRunItem, action: "retry" | "mark_manual_submitted") {
+    if (actingRunId === run.id) return;
+
+    setActingRunId(run.id);
+    setStatus(action === "retry" ? "Re-queueing apply task..." : "Saving manual completion...");
+    try {
+      const result = await fetchJsonWithRetry<{ run: AutomationRunItem }>(`/api/automation-runs/${run.id}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action })
+      });
+
+      if (!result.ok) {
+        setStatus(result.message || "Failed to update apply task");
+        return;
+      }
+
+      upsertAutomationRun(result.data.run);
+      if (action === "mark_manual_submitted") {
+        await loadProfileAndApplications();
+        await loadFeed();
+        setStatus("Marked as applied manually.");
+      } else {
+        setStatus("Apply task re-queued.");
+      }
+    } finally {
+      setActingRunId(null);
+    }
+  }
+
   return (
     <main className="app-shell">
       <div className="card topbar">
@@ -817,7 +1144,7 @@ export default function HomePage() {
         <div className="topbar-side">
           <div className="status-pill">{status}</div>
           <div className="hero-stats">
-            <span className="hero-stat">{feed.length} jobs ready</span>
+            <span className="hero-stat">{filteredFeed.length} jobs ready</span>
             <span className="hero-stat">{hasResumeReady ? "Resume ready" : "Resume missing"}</span>
           </div>
           <div className="tabs">
@@ -836,6 +1163,11 @@ export default function HomePage() {
             >
               Tracking
             </button>
+            {DEV_TOOLS_ENABLED ? (
+              <button className={`tab ${activeTab === "dev" ? "active" : ""}`} onClick={() => setActiveTab("dev")}>
+                Dev Tools
+              </button>
+            ) : null}
           </div>
         </div>
       </div>
@@ -1016,7 +1348,7 @@ export default function HomePage() {
               </button>
               <label className="feed-filter">
                 <span className="small">Source</span>
-                <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+                <select value={sourceFilter} onChange={(event) => handleSourceFilterChange(event.target.value)}>
                   <option value="all">All sources</option>
                   {availableSources.map((source) => (
                     <option key={source} value={source}>
@@ -1126,7 +1458,7 @@ export default function HomePage() {
                   </span>
                 </div>
                 <div className="swipe-meta">
-                  <span className="small">job {1} of {feed.length}</span>
+                  <span className="small">job {1} of {filteredFeed.length}</span>
                   <span className="small">score {topJob.score} • {topJob.source ?? "local"}</span>
                 </div>
                 <div className="job-highlight-row">
@@ -1150,21 +1482,31 @@ export default function HomePage() {
                 <div className="job-brief">
                   <h3>Description</h3>
                   <ul className="job-bullets">
-                    {topDescriptionBullets.map((item) => (
+                    {visibleDescriptionBullets.map((item) => (
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
+                  {topDescriptionBullets.length > 2 ? (
+                    <button className="text-button" type="button" onClick={() => setShowFullDescription((prev) => !prev)}>
+                      {showFullDescription ? "Show less" : "Read more"}
+                    </button>
+                  ) : null}
                 </div>
                 {topRequirementBullets.length > 0 ? (
                   <div className="requirements-block">
-                    <h3>Must have</h3>
+                    <h3>Requirements</h3>
                     <ul className="requirements-list">
-                      {topRequirementBullets.map((item) => (
+                      {visibleRequirementBullets.map((item) => (
                         <li className="req-item" key={item}>
                           {item}
                         </li>
                       ))}
                     </ul>
+                    {topRequirementBullets.length > 2 ? (
+                      <button className="text-button" type="button" onClick={() => setShowFullRequirements((prev) => !prev)}>
+                        {showFullRequirements ? "Show less" : "Read more"}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
                 <div className="swipe-actions">
@@ -1225,17 +1567,174 @@ export default function HomePage() {
             </thead>
             <tbody>
               {automationRuns.map((run) => (
-                <tr key={run.id}>
-                  <td>{run.job.title}</td>
-                  <td>{run.siteType}</td>
-                  <td>{run.status}</td>
-                  <td>
-                    {run.blockingQuestion
-                      ? `Needs input: ${run.blockingQuestion}`
-                      : run.currentStep ?? run.latestEvent?.message ?? "Queued"}
-                  </td>
-                  <td>{new Date(run.updatedAt).toLocaleString()}</td>
-                </tr>
+                <Fragment key={run.id}>
+                  <tr key={run.id}>
+                    <td>{run.job.title}</td>
+                    <td>{run.siteType}</td>
+                    <td>{run.status}</td>
+                    <td>
+                      {run.requiresManualAttention ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <span>{run.blockingQuestion ?? "This application needs manual attention."}</span>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <a href={run.manualActionUrl ?? run.job.url} target="_blank" rel="noreferrer">
+                              Open job page
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => performRunAction(run, "mark_manual_submitted")}
+                              disabled={actingRunId === run.id}
+                            >
+                              {actingRunId === run.id ? "Saving..." : "Mark applied manually"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => performRunAction(run, "retry")}
+                              disabled={actingRunId === run.id}
+                            >
+                              {actingRunId === run.id ? "Please wait..." : "Retry automation"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : run.blockingQuestion ? (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          <span>{`Needs input: ${run.blockingQuestion}`}</span>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                            <input
+                              value={runAnswerDrafts[run.id] ?? ""}
+                              placeholder="Type answer"
+                              onChange={(event) =>
+                                setRunAnswerDrafts((prev) => ({ ...prev, [run.id]: event.target.value }))
+                              }
+                              style={{ minWidth: 220, flex: "1 1 220px" }}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => submitRunAnswer(run)}
+                              disabled={answeringRunId === run.id || !(runAnswerDrafts[run.id] ?? "").trim()}
+                            >
+                              {answeringRunId === run.id ? "Saving..." : "Save answer"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        run.currentStep ?? run.latestEvent?.message ?? "Queued"
+                      )}
+                    </td>
+                    <td>
+                      <div style={{ display: "grid", gap: 8 }}>
+                        <span>{new Date(run.updatedAt).toLocaleString()}</span>
+                        <button type="button" className="text-button" onClick={() => void toggleRunDetails(run.id)}>
+                          {expandedRunId === run.id ? "Hide details" : "Show details"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {expandedRunId === run.id ? (
+                    <tr>
+                      <td colSpan={5}>
+                        {(() => {
+                          const detailRun = runDetailsById[run.id] ?? run;
+                          const anchor = detailRun.debug?.anchor;
+                          const browserbase = detailRun.debug?.browserbase;
+                          return (
+                            <div style={{ display: "grid", gap: 12 }}>
+                              {loadingRunDetailsId === run.id ? <div className="small">Loading details...</div> : null}
+                              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                <span className="chip">Run ID: {detailRun.id}</span>
+                                {anchor?.taskStatus ? <span className="chip">Anchor status: {anchor.taskStatus}</span> : null}
+                                {anchor?.workflowId ? <span className="chip">Workflow: {anchor.workflowId}</span> : null}
+                                {anchor?.sessionId ? <span className="chip">Session: {anchor.sessionId}</span> : null}
+                                {browserbase?.taskStatus ? (
+                                  <span className="chip">Browserbase status: {browserbase.taskStatus}</span>
+                                ) : null}
+                                {browserbase?.sessionId ? (
+                                  <span className="chip">Browserbase session: {browserbase.sessionId}</span>
+                                ) : null}
+                              </div>
+                              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                                {anchor?.liveViewUrl ? (
+                                  <a href={anchor.liveViewUrl} target="_blank" rel="noreferrer">
+                                    Open live view
+                                  </a>
+                                ) : null}
+                                {anchor?.cdpUrl ? (
+                                  <a href={anchor.cdpUrl} target="_blank" rel="noreferrer">
+                                    Open CDP URL
+                                  </a>
+                                ) : null}
+                                {browserbase?.sessionUrl ? (
+                                  <a href={browserbase.sessionUrl} target="_blank" rel="noreferrer">
+                                    Open Browserbase session
+                                  </a>
+                                ) : null}
+                                {browserbase?.replayUrl ? (
+                                  <a href={browserbase.replayUrl} target="_blank" rel="noreferrer">
+                                    Open Browserbase replay
+                                  </a>
+                                ) : null}
+                                <a href={detailRun.job.url} target="_blank" rel="noreferrer">
+                                  Open listing
+                                </a>
+                              </div>
+                              {anchor?.recordings?.length ? (
+                                <div>
+                                  <strong>Recordings</strong>
+                                  <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                                    {anchor.recordings.map((recordingUrl) => (
+                                      <a href={recordingUrl} target="_blank" rel="noreferrer" key={recordingUrl}>
+                                        {recordingUrl}
+                                      </a>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {detailRun.events?.length ? (
+                                <div>
+                                  <strong>Recent events</strong>
+                                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                    {detailRun.events.map((event) => (
+                                      <details key={event.id}>
+                                        <summary>
+                                          {new Date(event.createdAt).toLocaleString()} • {event.level} • {event.message}
+                                        </summary>
+                                        {event.payload !== undefined && event.payload !== null ? (
+                                          <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                            {stringifyDebugValue(event.payload)}
+                                          </pre>
+                                        ) : (
+                                          <div className="small" style={{ marginTop: 8 }}>
+                                            No payload
+                                          </div>
+                                        )}
+                                      </details>
+                                    ))}
+                                  </div>
+                                </div>
+                              ) : null}
+                              {anchor?.raw !== undefined ? (
+                                <details>
+                                  <summary>Latest Anchor payload</summary>
+                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                    {stringifyDebugValue(anchor.raw)}
+                                  </pre>
+                                </details>
+                              ) : null}
+                              {browserbase?.raw !== undefined ? (
+                                <details>
+                                  <summary>Latest Browserbase payload</summary>
+                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                    {stringifyDebugValue(browserbase.raw)}
+                                  </pre>
+                                </details>
+                              ) : null}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
               ))}
               {automationRuns.length === 0 ? (
                 <tr>
@@ -1279,6 +1778,240 @@ export default function HomePage() {
               ) : null}
             </tbody>
           </table>
+        </section>
+      ) : null}
+
+      {DEV_TOOLS_ENABLED && activeTab === "dev" ? (
+        <section className="card form-card">
+          <div className="section-head">
+            <div>
+              <h2>Dev Tools</h2>
+              <p className="small">Local-only controls for testing enrichment and inspecting refresh output.</p>
+            </div>
+          </div>
+
+          <div className="grid-2">
+            <label>
+              AI summaries
+              <select
+                value={devSettings.aiSummariesEnabled ? "on" : "off"}
+                onChange={(event) =>
+                  setDevSettings((prev) => ({ ...prev, aiSummariesEnabled: event.target.value === "on" }))
+                }
+              >
+                <option value="off">Off</option>
+                <option value="on">On</option>
+              </select>
+              <span className="small">Used when you click Find new jobs.</span>
+            </label>
+
+            <label>
+              AI jobs per refresh
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={devSettings.aiMaxJobs}
+                onChange={(event) =>
+                  setDevSettings((prev) => ({
+                    ...prev,
+                    aiMaxJobs: Math.min(100, Math.max(1, Number(event.target.value) || 1))
+                  }))
+                }
+              />
+              <span className="small">Caps token usage by limiting how many jobs get enriched on each refresh.</span>
+            </label>
+          </div>
+
+          <div className="metrics-grid" style={{ marginTop: 16 }}>
+            <div className="metric-card">
+              <span className="small">Last refresh</span>
+              <strong>{lastRefreshSnapshot ? `${lastRefreshSnapshot.fetched} jobs fetched` : "No refresh yet"}</strong>
+            </div>
+            <div className="metric-card">
+              <span className="small">AI summaries</span>
+              <strong>
+                {lastRefreshSnapshot?.llm?.enabled
+                  ? `${lastRefreshSnapshot.llm.updated} updated`
+                  : devSettings.aiSummariesEnabled
+                  ? "Waiting for next refresh"
+                  : "Off"}
+              </strong>
+            </div>
+            <div className="metric-card">
+              <span className="small">AI provider</span>
+              <strong>{lastRefreshSnapshot?.llm?.provider ?? "Not used yet"}</strong>
+            </div>
+            <div className="metric-card">
+              <span className="small">Total jobs in DB</span>
+              <strong>{lastRefreshSnapshot?.totalJobs ?? feed.length}</strong>
+            </div>
+          </div>
+
+          <div style={{ marginTop: 18 }}>
+            <h3>Source counts</h3>
+            {lastRefreshSnapshot && Object.keys(lastRefreshSnapshot.sourceCounts).length > 0 ? (
+              <div className="chip-list" style={{ marginTop: 8 }}>
+                {Object.entries(lastRefreshSnapshot.sourceCounts)
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([source, count]) => (
+                    <span className="chip" key={source}>
+                      {source}: {count}
+                    </span>
+                  ))}
+              </div>
+            ) : (
+              <p className="small" style={{ marginTop: 8 }}>
+                Refresh once to see per-source counts.
+              </p>
+            )}
+          </div>
+
+          <div style={{ marginTop: 18 }}>
+            <h3>Automation-ready jobs</h3>
+            <p className="small" style={{ marginTop: 8 }}>
+              Real supported jobs from the current database, kept here for apply-flow testing.
+            </p>
+            {automationReadyJobs.length > 0 ? (
+              <table className="table" style={{ marginTop: 10 }}>
+                <thead>
+                  <tr>
+                    <th>Role</th>
+                    <th>Site</th>
+                    <th>Location</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {automationReadyJobs.map((job) => (
+                    <tr key={job.id}>
+                      <td>
+                        <div>{job.title}</div>
+                        <div className="small">
+                          {job.company} • {job.source ?? "local"}
+                        </div>
+                      </td>
+                      <td>{job.siteType}</td>
+                      <td>{job.location}</td>
+                      <td>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                          <a href={job.url} target="_blank" rel="noreferrer">
+                            Open
+                          </a>
+                          <button type="button" onClick={() => setAutomationPreviewJobId(job.id)}>
+                            Show card
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              submitApply(job.id, {
+                                id: job.id,
+                                title: job.title,
+                                company: job.company,
+                                location: job.location,
+                                isRemote: /remote/i.test(job.location),
+                                source: job.source,
+                                summary: "",
+                                url: job.url,
+                                score: 0,
+                                whyMatched: []
+                              })
+                            }
+                          >
+                            Queue apply
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="small" style={{ marginTop: 8 }}>
+                No supported test jobs are ready right now.
+              </p>
+            )}
+
+            {automationPreviewJob ? (
+              <div style={{ marginTop: 16 }}>
+                <h3>Preview card</h3>
+                <article className="swipe-card" style={{ marginTop: 10, touchAction: "auto", userSelect: "auto" }}>
+                  <div className="swipe-meta">
+                    <span className="small">automation-ready</span>
+                    <span className="small">
+                      {automationPreviewJob.siteType} • {automationPreviewJob.source ?? "local"}
+                    </span>
+                  </div>
+                  <div className="job-highlight-row">
+                    <span className="hero-stat">{automationPreviewJob.siteType}</span>
+                    <span className="hero-stat">{automationPreviewJob.location}</span>
+                  </div>
+                  <h2>{automationPreviewJob.title}</h2>
+                  <p className="job-subline">
+                    {automationPreviewJob.company} • {automationPreviewJob.location}
+                  </p>
+                  <p className="small">
+                    This job points to a supported apply target and can be used to test the current automation flow.
+                  </p>
+                  <div className="swipe-actions">
+                    <a href={automationPreviewJob.url} target="_blank" rel="noreferrer" className="small">
+                      Open
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        submitApply(automationPreviewJob.id, {
+                          id: automationPreviewJob.id,
+                          title: automationPreviewJob.title,
+                          company: automationPreviewJob.company,
+                          location: automationPreviewJob.location,
+                          isRemote: /remote/i.test(automationPreviewJob.location),
+                          source: automationPreviewJob.source,
+                          summary: "",
+                          url: automationPreviewJob.url,
+                          score: 0,
+                          whyMatched: []
+                        })
+                      }
+                    >
+                      Queue apply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab("tracking");
+                        setStatus("Opened apply tracking.");
+                      }}
+                    >
+                      View tracking
+                    </button>
+                  </div>
+                </article>
+              </div>
+            ) : null}
+          </div>
+
+          {lastRefreshSnapshot?.errors.length ? (
+            <div style={{ marginTop: 18 }}>
+              <h3>Refresh warnings</h3>
+              <ul className="job-bullets" style={{ marginTop: 8 }}>
+                {lastRefreshSnapshot.errors.slice(0, 5).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+
+          {lastRefreshSnapshot?.llm?.errors.length ? (
+            <div style={{ marginTop: 18 }}>
+              <h3>AI warnings</h3>
+              <ul className="job-bullets" style={{ marginTop: 8 }}>
+                {lastRefreshSnapshot.llm.errors.slice(0, 5).map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
       ) : null}
     </main>
