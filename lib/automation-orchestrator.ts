@@ -2,6 +2,12 @@ import { Buffer } from "node:buffer";
 
 import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "@prisma/client";
 
+import {
+  buildAutomationDebug,
+  parseAutomationAnswers,
+  parseEventPayload,
+  serializeAutomationEvent
+} from "@/lib/automation-debug";
 import { prisma } from "@/lib/prisma";
 
 export type AutomationOrchestratorMode = "local" | "n8n";
@@ -31,43 +37,6 @@ type RunWithContextRelations = AutomationRun & {
   job: JobPosting;
 };
 
-type AnchorDebugSummary = {
-  sessionId?: string;
-  workflowId?: string;
-  liveViewUrl?: string;
-  cdpUrl?: string;
-  taskStatus?: string;
-  recordings?: string[];
-  raw?: unknown;
-};
-
-type BrowserbaseDebugSummary = {
-  sessionId?: string;
-  sessionUrl?: string;
-  replayUrl?: string;
-  taskStatus?: string;
-  completed?: boolean;
-  actions?: unknown[];
-  usage?: unknown;
-  raw?: unknown;
-};
-
-type StagehandDebugSummary = {
-  provider?: string;
-  model?: string;
-  baseUrl?: string;
-  finalUrl?: string;
-  actions?: unknown[];
-  ai?: unknown[];
-  snapshot?: {
-    label?: string;
-    mimeType?: string;
-    dataUrl?: string;
-    error?: string;
-  };
-  raw?: unknown;
-};
-
 function appendEvent(runId: number, message: string, level: "INFO" | "WARN" | "ERROR" = "INFO", payload?: unknown) {
   return prisma.automationEvent.create({
     data: {
@@ -77,117 +46,6 @@ function appendEvent(runId: number, message: string, level: "INFO" | "WARN" | "E
       payload: payload === undefined ? null : JSON.stringify(payload)
     }
   });
-}
-
-function parseAnswers(run: Pick<AutomationRun, "answersJson">) {
-  try {
-    const parsed = run.answersJson ? JSON.parse(run.answersJson) : {};
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return {} as Record<string, string>;
-    }
-    return Object.fromEntries(
-      Object.entries(parsed).filter((entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string")
-    );
-  } catch {
-    return {} as Record<string, string>;
-  }
-}
-
-function parseEventPayload(payload: string | null) {
-  if (!payload) return null;
-  try {
-    return JSON.parse(payload) as unknown;
-  } catch {
-    return payload;
-  }
-}
-
-function normalizeUrl(value: unknown) {
-  return typeof value === "string" && /^https?:\/\//i.test(value) ? value : undefined;
-}
-
-function extractAnchorDebug(events: AutomationEvent[]): AnchorDebugSummary | null {
-  const merged: AnchorDebugSummary = {};
-
-  for (const event of events) {
-    const payload = parseEventPayload(event.payload);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const anchor = "anchor" in payload ? (payload as { anchor?: unknown }).anchor : null;
-    if (!anchor || typeof anchor !== "object" || Array.isArray(anchor)) continue;
-
-    const record = anchor as Record<string, unknown>;
-    if (!merged.sessionId && typeof record.sessionId === "string") merged.sessionId = record.sessionId;
-    if (!merged.workflowId && typeof record.workflowId === "string") merged.workflowId = record.workflowId;
-    if (!merged.taskStatus && typeof record.taskStatus === "string") merged.taskStatus = record.taskStatus;
-    if (!merged.liveViewUrl) merged.liveViewUrl = normalizeUrl(record.liveViewUrl);
-    if (!merged.cdpUrl) merged.cdpUrl = normalizeUrl(record.cdpUrl);
-    if (!merged.recordings && Array.isArray(record.recordings)) {
-      merged.recordings = record.recordings.filter((item): item is string => typeof item === "string");
-    }
-    if (merged.raw === undefined && "raw" in record) merged.raw = record.raw;
-  }
-
-  if (!merged.sessionId && !merged.workflowId && !merged.liveViewUrl && !merged.taskStatus && !merged.recordings?.length) {
-    return null;
-  }
-
-  return merged;
-}
-
-function extractBrowserbaseDebug(events: AutomationEvent[]): BrowserbaseDebugSummary | null {
-  const merged: BrowserbaseDebugSummary = {};
-
-  for (const event of events) {
-    const payload = parseEventPayload(event.payload);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const browserbase = "browserbase" in payload ? (payload as { browserbase?: unknown }).browserbase : null;
-    if (!browserbase || typeof browserbase !== "object" || Array.isArray(browserbase)) continue;
-
-    const record = browserbase as Record<string, unknown>;
-    if (!merged.sessionId && typeof record.sessionId === "string") merged.sessionId = record.sessionId;
-    if (!merged.taskStatus && typeof record.taskStatus === "string") merged.taskStatus = record.taskStatus;
-    if (merged.completed === undefined && typeof record.completed === "boolean") merged.completed = record.completed;
-    if (!merged.sessionUrl) merged.sessionUrl = normalizeUrl(record.sessionUrl);
-    if (!merged.replayUrl) merged.replayUrl = normalizeUrl(record.replayUrl);
-    if (!merged.actions && Array.isArray(record.actions)) merged.actions = record.actions;
-    if (merged.usage === undefined && "usage" in record) merged.usage = record.usage;
-    if (merged.raw === undefined && "raw" in record) merged.raw = record.raw;
-  }
-
-  if (!merged.sessionId && !merged.sessionUrl && !merged.replayUrl && !merged.taskStatus && merged.completed === undefined) {
-    return null;
-  }
-
-  return merged;
-}
-
-function extractStagehandDebug(events: AutomationEvent[]): StagehandDebugSummary | null {
-  const merged: StagehandDebugSummary = {};
-
-  for (const event of events) {
-    const payload = parseEventPayload(event.payload);
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
-    const stagehand = "stagehand" in payload ? (payload as { stagehand?: unknown }).stagehand : null;
-    if (!stagehand || typeof stagehand !== "object" || Array.isArray(stagehand)) continue;
-
-    const record = stagehand as Record<string, unknown>;
-    if (!merged.provider && typeof record.provider === "string") merged.provider = record.provider;
-    if (!merged.model && typeof record.model === "string") merged.model = record.model;
-    if (!merged.baseUrl && typeof record.baseUrl === "string") merged.baseUrl = record.baseUrl;
-    if (!merged.finalUrl) merged.finalUrl = normalizeUrl(record.finalUrl);
-    if (!merged.actions && Array.isArray(record.actions)) merged.actions = record.actions;
-    if (!merged.ai && Array.isArray(record.ai)) merged.ai = record.ai;
-    if (!merged.snapshot && record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)) {
-      merged.snapshot = record.snapshot as StagehandDebugSummary["snapshot"];
-    }
-    if (merged.raw === undefined && "raw" in record) merged.raw = record.raw;
-  }
-
-  if (!merged.provider && !merged.model && !merged.finalUrl && !merged.actions && !merged.ai && merged.raw === undefined) {
-    return null;
-  }
-
-  return merged;
 }
 
 function getAppBaseUrl() {
@@ -245,12 +103,8 @@ function serializeRun(run: RunWithRelations) {
     finishedAt: run.finishedAt,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
-    debug: {
-      anchor: extractAnchorDebug(run.events),
-      browserbase: extractBrowserbaseDebug(run.events),
-      stagehand: extractStagehandDebug(run.events)
-    },
-    answers: parseAnswers(run),
+    debug: buildAutomationDebug(run.events),
+    answers: parseAutomationAnswers(run),
     latestEvent: latestEvent
       ? {
           id: latestEvent.id,
@@ -345,7 +199,7 @@ export async function dispatchAutomationRun(runId: number, reason?: string) {
       siteType: run.siteType,
       status: run.status,
       currentStep: run.currentStep,
-      answers: parseAnswers(run)
+      answers: parseAutomationAnswers(run)
     },
     job: {
       id: run.job.id,

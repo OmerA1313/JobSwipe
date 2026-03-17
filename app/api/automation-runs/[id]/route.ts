@@ -20,7 +20,12 @@ export async function GET(_req: Request, context: { params: Promise<{ id: string
       return NextResponse.json({ message: "Automation run not found" }, { status: 404 });
     }
 
-    return NextResponse.json({ run });
+    return NextResponse.json({
+      run: {
+        ...run,
+        requiresManualAttention: run.requiresManualAttention
+      }
+    });
   } catch (error) {
     console.error("automation-run GET failed", error);
     return NextResponse.json({ message: "Failed to load automation run" }, { status: 503 });

@@ -130,13 +130,11 @@ export function TrackingSurface({
                             {stagehand?.finalUrl ? <a href={stagehand.finalUrl} target="_blank" rel="noreferrer">Open final page</a> : null}
                             <a href={detailRun.job.url} target="_blank" rel="noreferrer">Open listing</a>
                           </div>
-                          {detailRun.blockingQuestion ? (
-                            <div className="tracking-summary-card">
-                              <StatusChip status={detailRun.requiresManualAttention ? "Manual attention" : detailRun.status} />
-                              <strong>{detailRun.currentStep ?? "Blocked run"}</strong>
-                              <p>{detailRun.blockingQuestion}</p>
-                            </div>
-                          ) : null}
+                          <div className="tracking-summary-card">
+                            <StatusChip status={detailRun.requiresManualAttention ? "Manual attention" : detailRun.status} />
+                            <strong>{detailRun.currentStep ?? detailRun.latestEvent?.message ?? "Run details"}</strong>
+                            <p>{detailRun.blockingQuestion ?? detailRun.lastError ?? detailRun.latestEvent?.message ?? "No blocker recorded."}</p>
+                          </div>
                           {stagehand?.snapshot?.dataUrl ? (
                             <details open>
                               <summary>Stagehand snapshot{stagehand.snapshot.label ? ` (${stagehand.snapshot.label})` : ""}</summary>

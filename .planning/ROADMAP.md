@@ -6,7 +6,7 @@ This roadmap turns the current brownfield MVP into an investor-demoable product 
 
 ## Phases
 
-- [~] **Phase 1: Stabilize the MVP Core** - Clean the existing codebase, productize run visibility, and lock the automation contract.
+- [x] **Phase 1: Stabilize the MVP Core** - Clean the existing codebase, productize run visibility, and lock the automation contract.
 - [ ] **Phase 2: Ship Reliable Supported ATS Automation** - Make a few ATS families complete end-to-end application flows reliably.
 - [ ] **Phase 3: Improve Application Quality and User Context** - Add stronger tailoring and minimize non-job-related user interruption.
 - [ ] **Phase 4: Demo Hardening and Growth-Ready Architecture** - Polish the product for investor demos and prepare the execution layer for future paid infrastructure.
@@ -26,7 +26,7 @@ This roadmap turns the current brownfield MVP into an investor-demoable product 
 
 Plans:
 - [x] 01-01: Split and clean the current product surface around feed, profile, and tracking responsibilities.
-- [ ] 01-02: Harden automation event, snapshot, and debug serialization through the app.
+- [x] 01-02: Harden automation event, snapshot, and debug serialization through the app.
 - [x] 01-03: Remove dead-path workflow clutter and define the supported executor/orchestrator contract.
 
 ### Phase 2: Ship Reliable Supported ATS Automation
@@ -80,7 +80,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Stabilize the MVP Core | 2/3 | In progress | 01-01, 01-03 |
+| 1. Stabilize the MVP Core | 3/3 | Complete | 01-01, 01-03, 01-02 |
 | 2. Ship Reliable Supported ATS Automation | 0/3 | Not started | - |
 | 3. Improve Application Quality and User Context | 0/2 | Not started | - |
 | 4. Demo Hardening and Growth-Ready Architecture | 0/2 | Not started | - |
