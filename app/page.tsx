@@ -1,146 +1,21 @@
 "use client";
 
-import { Fragment, startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-
-type Profile = {
-  fullName?: string;
-  email?: string;
-  phone?: string;
-  resumeText?: string;
-  resumeFileName?: string;
-  resumeFileMimeType?: string;
-  hasResumeFile?: boolean;
-  desiredRoles?: string[];
-  seniorityPreference?: "any" | "intern" | "junior" | "mid" | "senior" | "lead";
-  preferredLocations?: string[];
-  preferredSalaryMin?: number;
-  remotePreference?: "remote" | "hybrid" | "onsite";
-  visaStatus?: string;
-  yearsExperience?: number;
-  linkedInUrl?: string;
-  githubUrl?: string;
-  portfolioUrl?: string;
-};
-
-type ResumeUploadPayload = {
-  fileName: string;
-  mimeType: string;
-  fileBase64: string;
-};
-
-type FeedJob = {
-  id: number;
-  title: string;
-  company: string;
-  location: string;
-  isRemote: boolean;
-  source?: string;
-  summary: string;
-  cardSummary?: string;
-  descriptionSummary?: string;
-  descriptionHighlights?: string[];
-  requirementsSummary?: string[];
-  url: string;
-  score: number;
-  whyMatched: string[];
-  passSignals?: {
-    role?: string;
-    location?: string;
-    seniority?: string;
-    remote?: string;
-  };
-};
-
-type ApplicationItem = {
-  id: number;
-  status: string;
-  createdAt: string;
-  hasResumeFile?: boolean;
-  job: {
-    title: string;
-    company: string;
-    location: string;
-  };
-};
-
-type AutomationRunItem = {
-  id: number;
-  jobId: number;
-  siteType: string;
-  status: string;
-  currentStep?: string | null;
-  needsInput: boolean;
-  requiresManualAttention?: boolean;
-  blockingQuestion?: string | null;
-  inputField?: string | null;
-  answers?: Record<string, string>;
-  lastError?: string | null;
-  manualActionUrl?: string;
-  startedAt?: string | null;
-  finishedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  debug?: {
-    anchor?: {
-      sessionId?: string;
-      workflowId?: string;
-      liveViewUrl?: string;
-      cdpUrl?: string;
-      taskStatus?: string;
-      recordings?: string[];
-      raw?: unknown;
-    } | null;
-    browserbase?: {
-      sessionId?: string;
-      sessionUrl?: string;
-      replayUrl?: string;
-      taskStatus?: string;
-      completed?: boolean;
-      actions?: unknown[];
-      usage?: unknown;
-      raw?: unknown;
-    } | null;
-    stagehand?: {
-      provider?: string;
-      model?: string;
-      baseUrl?: string;
-      finalUrl?: string;
-      actions?: unknown[];
-      ai?: unknown[];
-      snapshot?: {
-        label?: string;
-        mimeType?: string;
-        dataUrl?: string;
-        error?: string;
-      };
-      raw?: unknown;
-    } | null;
-  };
-  latestEvent?: {
-    id: number;
-    level: string;
-    message: string;
-    createdAt: string;
-    payload?: unknown;
-  } | null;
-  events?: Array<{
-    id: number;
-    level: string;
-    message: string;
-    createdAt: string;
-    payload?: unknown;
-  }>;
-  job: {
-    id: number;
-    title: string;
-    company: string;
-    location: string;
-    url: string;
-    source?: string;
-  };
-};
-
-type SwipeDirection = "left" | "right" | "down";
+import { startTransition, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { FeedSurface } from "@/app/components/feed-surface";
+import type {
+  ApplicationItem,
+  AutomationReadyJob,
+  AutomationRunItem,
+  DevSettings,
+  FeedJob,
+  Profile,
+  RefreshSnapshot,
+  ResumeUploadPayload,
+  SwipeDirection
+} from "@/app/components/home-types";
+import { ProfileSurface } from "@/app/components/profile-surface";
+import { TopbarShell } from "@/app/components/topbar-shell";
+import { TrackingSurface } from "@/app/components/tracking-surface";
 
 type ApiResult<T> =
   | {
@@ -152,36 +27,6 @@ type ApiResult<T> =
       message: string;
       status?: number;
     };
-
-type DevSettings = {
-  aiSummariesEnabled: boolean;
-  aiMaxJobs: number;
-};
-
-type RefreshSnapshot = {
-  fetched: number;
-  totalJobs?: number;
-  sourceCounts: Record<string, number>;
-  errors: string[];
-  llm?: {
-    enabled: boolean;
-    provider?: string | null;
-    updated: number;
-    scanned: number;
-    errors: string[];
-  };
-};
-
-type AutomationReadyJob = {
-  id: number;
-  title: string;
-  company: string;
-  location: string;
-  source?: string;
-  url: string;
-  siteType: string;
-  latestRunStatus?: string | null;
-};
 
 const SWIPE_X_THRESHOLD = 110;
 const SWIPE_Y_THRESHOLD = 130;
@@ -591,7 +436,7 @@ export default function HomePage() {
       ),
     [leavingSwipe]
   );
-  const hasResumeReady = pendingResumeUpload !== null || profile.hasResumeFile;
+  const hasResumeReady = pendingResumeUpload !== null || Boolean(profile.hasResumeFile);
 
   function applyDragVisuals(x: number, y: number) {
     const card = topCardRef.current;
@@ -1150,697 +995,92 @@ export default function HomePage() {
 
   return (
     <main className="app-shell">
-      <div className="card topbar">
-        <div className="brand-block">
-          <span className="eyebrow">Sharper matching. Faster swipes.</span>
-          <h1>jobSwipe</h1>
-          <p className="small">A modern shortlist for real jobs, profile-aware filtering, and one-tap apply.</p>
-        </div>
-        <div className="topbar-side">
-          <div className="status-pill">{status}</div>
-          <div className="hero-stats">
-            <span className="hero-stat">{filteredFeed.length} jobs ready</span>
-            <span className="hero-stat">{hasResumeReady ? "Resume ready" : "Resume missing"}</span>
-          </div>
-          <div className="tabs">
-            <button
-              className={`tab ${activeTab === "preferences" ? "active" : ""}`}
-              onClick={() => setActiveTab("preferences")}
-            >
-              Preferences
-            </button>
-            <button className={`tab ${activeTab === "feed" ? "active" : ""}`} onClick={() => setActiveTab("feed")}>
-              Feed
-            </button>
-            <button
-              className={`tab ${activeTab === "tracking" ? "active" : ""}`}
-              onClick={() => setActiveTab("tracking")}
-            >
-              Tracking
-            </button>
-            {DEV_TOOLS_ENABLED ? (
-              <button className={`tab ${activeTab === "dev" ? "active" : ""}`} onClick={() => setActiveTab("dev")}>
-                Dev Tools
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
+      <TopbarShell
+        status={status}
+        filteredFeedCount={filteredFeed.length}
+        hasResumeReady={hasResumeReady}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        devToolsEnabled={DEV_TOOLS_ENABLED}
+      />
 
       {activeTab === "preferences" ? (
-        <section className="card form-card">
-          <div className="section-head">
-            <div>
-              <h2>Profile + Preferences</h2>
-              <p className="small">Tune role, location, seniority, and resume inputs that shape the feed.</p>
-            </div>
-          </div>
-          <div className="grid-2">
-            <label>
-              Full name
-              <input
-                value={profile.fullName ?? ""}
-                onChange={(event) => setProfile((prev) => ({ ...prev, fullName: event.target.value }))}
-              />
-            </label>
-            <label>
-              Email
-              <input
-                value={profile.email ?? ""}
-                onChange={(event) => setProfile((prev) => ({ ...prev, email: event.target.value }))}
-              />
-            </label>
-            <label>
-              Desired roles
-              <div className="chip-input">
-                <input
-                  value={desiredRoleDraft}
-                  placeholder="Add role (e.g. Junior Software Developer)"
-                  onChange={(event) => setDesiredRoleDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === ",") {
-                      event.preventDefault();
-                      addDesiredRoleFromDraft();
-                    }
-                  }}
-                />
-                <button type="button" onClick={addDesiredRoleFromDraft}>
-                  Add
-                </button>
-              </div>
-              <div className="chip-list">
-                {(profile.desiredRoles ?? []).map((role) => (
-                  <span className="chip" key={role}>
-                    {role}
-                    <button type="button" onClick={() => removeDesiredRole(role)} aria-label={`Remove ${role}`}>
-                      x
-                    </button>
-                  </span>
-                ))}
-                {(profile.desiredRoles ?? []).length === 0 ? <span className="small">No roles added yet</span> : null}
-              </div>
-            </label>
-            <label>
-              Seniority preference
-              <select
-                value={profile.seniorityPreference ?? "any"}
-                onChange={(event) =>
-                  setProfile((prev) => ({
-                    ...prev,
-                    seniorityPreference: event.target.value as "any" | "intern" | "junior" | "mid" | "senior" | "lead"
-                  }))
-                }
-              >
-                <option value="any">Any level</option>
-                <option value="intern">Intern</option>
-                <option value="junior">Junior</option>
-                <option value="mid">Mid-level</option>
-                <option value="senior">Senior</option>
-                <option value="lead">Lead / Principal / Manager</option>
-              </select>
-              <span className="small">Use this to focus the feed on your target seniority.</span>
-            </label>
-            <label>
-              Preferred locations
-              <div className="chip-input">
-                <input
-                  value={preferredLocationDraft}
-                  placeholder="Add location (e.g. Israel, Tel Aviv)"
-                  onChange={(event) => setPreferredLocationDraft(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === ",") {
-                      event.preventDefault();
-                      addPreferredLocationFromDraft();
-                    }
-                  }}
-                />
-                <button type="button" onClick={addPreferredLocationFromDraft}>
-                  Add
-                </button>
-              </div>
-              <div className="chip-list">
-                {(profile.preferredLocations ?? []).map((location) => (
-                  <span className="chip" key={location}>
-                    {location}
-                    <button
-                      type="button"
-                      onClick={() => removePreferredLocation(location)}
-                      aria-label={`Remove ${location}`}
-                    >
-                      x
-                    </button>
-                  </span>
-                ))}
-                {(profile.preferredLocations ?? []).length === 0 ? (
-                  <span className="small">No locations added yet</span>
-                ) : null}
-              </div>
-            </label>
-            <label>
-              Minimum salary (USD)
-              <input
-                type="number"
-                value={profile.preferredSalaryMin ?? ""}
-                onChange={(event) =>
-                  setProfile((prev) => ({ ...prev, preferredSalaryMin: Number(event.target.value) || undefined }))
-                }
-              />
-            </label>
-            <label>
-              Remote preference
-              <select
-                value={profile.remotePreference ?? "hybrid"}
-                onChange={(event) =>
-                  setProfile((prev) => ({
-                    ...prev,
-                    remotePreference: event.target.value as "remote" | "hybrid" | "onsite"
-                  }))
-                }
-              >
-                <option value="remote">Remote only</option>
-                <option value="hybrid">Include remote + on-site</option>
-                <option value="onsite">On-site only (no remote)</option>
-              </select>
-              <span className="small">Use this to include/exclude remote jobs from your feed.</span>
-            </label>
-          </div>
-
-          <label style={{ marginTop: 10 }}>
-            Resume PDF
-            <input type="file" accept=".pdf,application/pdf" onChange={handleResumeFileChange} />
-          </label>
-          <p className="small" style={{ marginTop: 8 }}>
-            {resumeFileName
-              ? `Selected: ${resumeFileName}`
-              : profile.hasResumeFile
-              ? "Resume PDF on file"
-              : "No resume file selected"}
-          </p>
-          <p className="small">Applications now attach your uploaded PDF resume file.</p>
-
-          <div className="actions" style={{ marginTop: 12 }}>
-            <button className="primary" onClick={saveProfile}>
-              Save profile
-            </button>
-            <span className="small">Status: {status}</span>
-          </div>
-        </section>
+        <ProfileSurface
+          profile={profile}
+          setProfile={setProfile}
+          desiredRoleDraft={desiredRoleDraft}
+          setDesiredRoleDraft={setDesiredRoleDraft}
+          preferredLocationDraft={preferredLocationDraft}
+          setPreferredLocationDraft={setPreferredLocationDraft}
+          addDesiredRoleFromDraft={addDesiredRoleFromDraft}
+          removeDesiredRole={removeDesiredRole}
+          addPreferredLocationFromDraft={addPreferredLocationFromDraft}
+          removePreferredLocation={removePreferredLocation}
+          handleResumeFileChange={handleResumeFileChange}
+          resumeFileName={resumeFileName}
+          pendingResumeUpload={pendingResumeUpload}
+          saveProfile={saveProfile}
+          status={status}
+        />
       ) : null}
 
       {activeTab === "feed" ? (
-        <section className="swipe-board">
-          <div className="feed-tools">
-            <div>
-              <h2>Swipe Feed</h2>
-              <p className="small">Swipe right to apply, left for not a fit, and down to skip.</p>
-            </div>
-            <div className="feed-tools-actions">
-              <button className="secondary-strong" onClick={refreshJobs} disabled={isRefreshingJobs}>
-                {isRefreshingJobs ? "Refreshing..." : "Find new jobs"}
-              </button>
-              <button onClick={() => resetQueue()} disabled={isResettingQueue}>
-                {isResettingQueue ? "Resetting..." : "Reset cards"}
-              </button>
-              <label className="feed-filter">
-                <span className="small">Source</span>
-                <select value={sourceFilter} onChange={(event) => handleSourceFilterChange(event.target.value)}>
-                  <option value="all">All sources</option>
-                  {availableSources.map((source) => (
-                    <option key={source} value={source}>
-                      {source}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <span className="small">Use source to narrow the list when you want to focus on one provider.</span>
-          </div>
-          {topJob ? (
-            <>
-              <div className="swipe-deck" ref={deckRef}>
-              {leavingSwipe ? (
-                <article
-                  key={`leaving-${leavingSwipe.job.id}`}
-                  className={`swipe-card top-card leaving-card leaving-${leavingSwipe.direction}`}
-                  style={
-                    {
-                      "--leave-x": `${leavingSwipe.x}px`,
-                      "--leave-y": `${leavingSwipe.y}px`,
-                      "--leave-rotation": `${leavingSwipe.rotation}deg`,
-                      "--apply-opacity": `${leavingSwipe.applyOpacity}`,
-                      "--nope-opacity": `${leavingSwipe.nopeOpacity}`
-                    } as CSSProperties
-                  }
-                >
-                  <div className="swipe-indicators">
-                    <span className="indicator nope">NOPE</span>
-                    <span className="indicator apply">APPLY</span>
-                  </div>
-                  <div className="swipe-meta">
-                    <span className="small">just swiped</span>
-                    <span className="small">score {leavingSwipe.job.score} • {leavingSwipe.job.source ?? "local"}</span>
-                  </div>
-                  <div className="job-highlight-row">
-                    <span className="hero-stat">{leavingSwipe.job.source ?? "local"}</span>
-                    <span className="hero-stat">{leavingSwipe.job.isRemote ? "Remote-friendly" : "On-site / hybrid"}</span>
-                  </div>
-                  <div className="pass-tags">
-                    {leavingSwipe.job.passSignals?.role ? <span className="pass-tag">Role: {leavingSwipe.job.passSignals.role}</span> : null}
-                    {leavingSwipe.job.passSignals?.seniority ? (
-                      <span className="pass-tag">Level: {leavingSwipe.job.passSignals.seniority}</span>
-                    ) : null}
-                    {leavingSwipe.job.passSignals?.location ? (
-                      <span className="pass-tag">Location: {leavingSwipe.job.passSignals.location}</span>
-                    ) : null}
-                    {leavingSwipe.job.passSignals?.remote ? (
-                      <span className="pass-tag">Mode: {leavingSwipe.job.passSignals.remote}</span>
-                    ) : null}
-                  </div>
-                  <h2>{leavingSwipe.job.title}</h2>
-                  <p className="job-subline">{leavingSwipe.job.company} • {leavingSwipe.job.location}</p>
-                  <div className="job-brief">
-                    <h3>Description</h3>
-                    <ul className="job-bullets">
-                      {leavingDescriptionBullets.map((item) => (
-                        <li key={item}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </article>
-              ) : null}
-              {queuedJobs
-                .map((job, index) => ({ job, index }))
-                .reverse()
-                .map(({ job, index }) => {
-                  const depth = index + 1;
-                  return (
-                    <article
-                      key={job.id}
-                      className="swipe-card deck-card"
-                      style={{
-                        transform: `translateY(calc(${depth * 14}px - var(--deck-lift, 0) * ${depth * 7}px)) scale(calc(${1 - depth * 0.03} + var(--deck-lift, 0) * 0.018))`,
-                        opacity: 0.62 - index * 0.12
-                      }}
-                    >
-                      <div className="swipe-meta">
-                        <span className="small">up next</span>
-                        <span className="small">score {job.score} • {job.source ?? "local"}</span>
-                      </div>
-                      <h2>{job.title}</h2>
-                      <p className="small">
-                        {job.company} • {job.location}
-                      </p>
-                    </article>
-                  );
-                })}
-
-              <article
-                key={topJob.id}
-                ref={topCardRef}
-                className={`swipe-card top-card ${isDragging ? "dragging" : ""}`}
-                style={cardStyle}
-                onPointerDown={handlePointerDown}
-                onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerEnd}
-                onPointerCancel={handlePointerEnd}
-              >
-                <div className="swipe-indicators">
-                  <span className="indicator nope">
-                    NOPE
-                  </span>
-                  <span className="indicator apply">
-                    APPLY
-                  </span>
-                </div>
-                <div className="swipe-meta">
-                  <span className="small">job {1} of {filteredFeed.length}</span>
-                  <span className="small">score {topJob.score} • {topJob.source ?? "local"}</span>
-                </div>
-                <div className="job-highlight-row">
-                  <span className="hero-stat">{topJob.source ?? "local"}</span>
-                  <span className="hero-stat">{topJob.isRemote ? "Remote-friendly" : "On-site / hybrid"}</span>
-                </div>
-                <div className="pass-tags">
-                  {topJob.passSignals?.role ? <span className="pass-tag">Role: {topJob.passSignals.role}</span> : null}
-                  {topJob.passSignals?.seniority ? (
-                    <span className="pass-tag">Level: {topJob.passSignals.seniority}</span>
-                  ) : null}
-                  {topJob.passSignals?.location ? (
-                    <span className="pass-tag">Location: {topJob.passSignals.location}</span>
-                  ) : null}
-                  {topJob.passSignals?.remote ? (
-                    <span className="pass-tag">Mode: {topJob.passSignals.remote}</span>
-                  ) : null}
-                </div>
-                <h2>{topJob.title}</h2>
-                <p className="job-subline">{topJob.company} • {topJob.location}</p>
-                <div className="job-brief">
-                  <h3>Description</h3>
-                  <ul className="job-bullets">
-                    {visibleDescriptionBullets.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                  {topDescriptionBullets.length > 2 ? (
-                    <button className="text-button" type="button" onClick={() => setShowFullDescription((prev) => !prev)}>
-                      {showFullDescription ? "Show less" : "Read more"}
-                    </button>
-                  ) : null}
-                </div>
-                {topRequirementBullets.length > 0 ? (
-                  <div className="requirements-block">
-                    <h3>Requirements</h3>
-                    <ul className="requirements-list">
-                      {visibleRequirementBullets.map((item) => (
-                        <li className="req-item" key={item}>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                    {topRequirementBullets.length > 2 ? (
-                      <button className="text-button" type="button" onClick={() => setShowFullRequirements((prev) => !prev)}>
-                        {showFullRequirements ? "Show less" : "Read more"}
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
-                <div className="swipe-actions">
-                  <button className="danger" onClick={() => triggerSwipe("left")} disabled={isSubmittingSwipe}>
-                    Not a fit
-                  </button>
-                  <button onClick={() => triggerSwipe("down")} disabled={isSubmittingSwipe}>
-                    Skip
-                  </button>
-                  <button className="primary" onClick={() => triggerSwipe("right")} disabled={isSubmittingSwipe}>
-                    Apply
-                  </button>
-                </div>
-                <a href={topJob.url} target="_blank" rel="noreferrer" className="small">
-                  Open listing
-                </a>
-                {missingFields.length > 0 ? (
-                  <p className="small" style={{ color: "#b91c1c", marginTop: 10 }}>
-                    Missing required profile fields:{" "}
-                    {missingFields.map((field) => missingFieldLabels[field] ?? field).join(", ")}
-                  </p>
-                ) : null}
-              </article>
-              </div>
-              {queuedJobs.length > 0 ? (
-                <div className="queue-note small">
-                  Next: {queuedJobs.map((job) => `${job.title} @ ${job.company}`).join(" • ")}
-                </div>
-              ) : (
-                <div className="queue-note small">Last card in queue</div>
-              )}
-            </>
-          ) : (
-            <div className="card">
-              <h2>Queue complete</h2>
-              <p className="small">
-                {sourceFilter !== "all"
-                  ? `No ${sourceFilter} jobs are available right now. Try finding new jobs or switch the source filter.`
-                  : "No jobs are waiting right now. Try finding new jobs or updating your preferences."}
-              </p>
-            </div>
-          )}
-        </section>
+        <FeedSurface
+          topJob={topJob}
+          queuedJobs={queuedJobs}
+          leavingSwipe={leavingSwipe}
+          filteredFeedLength={filteredFeed.length}
+          sourceFilter={sourceFilter}
+          availableSources={availableSources}
+          visibleDescriptionBullets={visibleDescriptionBullets}
+          visibleRequirementBullets={visibleRequirementBullets}
+          topDescriptionBullets={topDescriptionBullets}
+          topRequirementBullets={topRequirementBullets}
+          leavingDescriptionBullets={leavingDescriptionBullets}
+          isDragging={isDragging}
+          isSubmittingSwipe={isSubmittingSwipe}
+          isRefreshingJobs={isRefreshingJobs}
+          isResettingQueue={isResettingQueue}
+          deckRef={deckRef}
+          topCardRef={topCardRef}
+          cardStyle={cardStyle}
+          missingFields={missingFields}
+          missingFieldLabels={missingFieldLabels}
+          onRefreshJobs={() => void refreshJobs()}
+          onResetQueue={() => void resetQueue()}
+          onSourceFilterChange={handleSourceFilterChange}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerEnd={handlePointerEnd}
+          onToggleDescription={() => setShowFullDescription((prev) => !prev)}
+          onToggleRequirements={() => setShowFullRequirements((prev) => !prev)}
+          showFullDescription={showFullDescription}
+          showFullRequirements={showFullRequirements}
+          onSwipe={triggerSwipe}
+        />
       ) : null}
 
       {activeTab === "tracking" ? (
-        <section className="card">
-          <h2>Apply Progress</h2>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Site</th>
-                <th>Status</th>
-                <th>Current step</th>
-                <th>Last update</th>
-              </tr>
-            </thead>
-            <tbody>
-              {automationRuns.map((run) => (
-                <Fragment key={run.id}>
-                  <tr key={run.id}>
-                    <td>{run.job.title}</td>
-                    <td>{run.siteType}</td>
-                    <td>{run.status}</td>
-                    <td>
-                      {run.requiresManualAttention ? (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <span>{run.blockingQuestion ?? "This application needs manual attention."}</span>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <a href={run.manualActionUrl ?? run.job.url} target="_blank" rel="noreferrer">
-                              Open job page
-                            </a>
-                            <button
-                              type="button"
-                              onClick={() => performRunAction(run, "mark_manual_submitted")}
-                              disabled={actingRunId === run.id}
-                            >
-                              {actingRunId === run.id ? "Saving..." : "Mark applied manually"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => performRunAction(run, "retry")}
-                              disabled={actingRunId === run.id}
-                            >
-                              {actingRunId === run.id ? "Please wait..." : "Retry automation"}
-                            </button>
-                          </div>
-                        </div>
-                      ) : run.blockingQuestion ? (
-                        <div style={{ display: "grid", gap: 8 }}>
-                          <span>{`Needs input: ${run.blockingQuestion}`}</span>
-                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                            <input
-                              value={runAnswerDrafts[run.id] ?? ""}
-                              placeholder="Type answer"
-                              onChange={(event) =>
-                                setRunAnswerDrafts((prev) => ({ ...prev, [run.id]: event.target.value }))
-                              }
-                              style={{ minWidth: 220, flex: "1 1 220px" }}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => submitRunAnswer(run)}
-                              disabled={answeringRunId === run.id || !(runAnswerDrafts[run.id] ?? "").trim()}
-                            >
-                              {answeringRunId === run.id ? "Saving..." : "Save answer"}
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        run.currentStep ?? run.latestEvent?.message ?? "Queued"
-                      )}
-                    </td>
-                    <td>
-                      <div style={{ display: "grid", gap: 8 }}>
-                        <span>{new Date(run.updatedAt).toLocaleString()}</span>
-                        <button type="button" className="text-button" onClick={() => void toggleRunDetails(run.id)}>
-                          {expandedRunId === run.id ? "Hide details" : "Show details"}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {expandedRunId === run.id ? (
-                    <tr>
-                      <td colSpan={5}>
-                        {(() => {
-                          const detailRun = runDetailsById[run.id] ?? run;
-                          const anchor = detailRun.debug?.anchor;
-                          const browserbase = detailRun.debug?.browserbase;
-                          const stagehand = detailRun.debug?.stagehand;
-                          return (
-                            <div style={{ display: "grid", gap: 12 }}>
-                              {loadingRunDetailsId === run.id ? <div className="small">Loading details...</div> : null}
-                              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                                <span className="chip">Run ID: {detailRun.id}</span>
-                                {anchor?.taskStatus ? <span className="chip">Anchor status: {anchor.taskStatus}</span> : null}
-                                {anchor?.workflowId ? <span className="chip">Workflow: {anchor.workflowId}</span> : null}
-                                {anchor?.sessionId ? <span className="chip">Session: {anchor.sessionId}</span> : null}
-                                {browserbase?.taskStatus ? (
-                                  <span className="chip">Browserbase status: {browserbase.taskStatus}</span>
-                                ) : null}
-                                {browserbase?.sessionId ? (
-                                  <span className="chip">Browserbase session: {browserbase.sessionId}</span>
-                                ) : null}
-                                {stagehand?.provider ? <span className="chip">Stagehand: {stagehand.provider}</span> : null}
-                                {stagehand?.model ? <span className="chip">Model: {stagehand.model}</span> : null}
-                              </div>
-                              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                                {anchor?.liveViewUrl ? (
-                                  <a href={anchor.liveViewUrl} target="_blank" rel="noreferrer">
-                                    Open live view
-                                  </a>
-                                ) : null}
-                                {anchor?.cdpUrl ? (
-                                  <a href={anchor.cdpUrl} target="_blank" rel="noreferrer">
-                                    Open CDP URL
-                                  </a>
-                                ) : null}
-                                {browserbase?.sessionUrl ? (
-                                  <a href={browserbase.sessionUrl} target="_blank" rel="noreferrer">
-                                    Open Browserbase session
-                                  </a>
-                                ) : null}
-                                {browserbase?.replayUrl ? (
-                                  <a href={browserbase.replayUrl} target="_blank" rel="noreferrer">
-                                    Open Browserbase replay
-                                  </a>
-                                ) : null}
-                                {stagehand?.finalUrl ? (
-                                  <a href={stagehand.finalUrl} target="_blank" rel="noreferrer">
-                                    Open final page
-                                  </a>
-                                ) : null}
-                                <a href={detailRun.job.url} target="_blank" rel="noreferrer">
-                                  Open listing
-                                </a>
-                              </div>
-                              {anchor?.recordings?.length ? (
-                                <div>
-                                  <strong>Recordings</strong>
-                                  <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-                                    {anchor.recordings.map((recordingUrl) => (
-                                      <a href={recordingUrl} target="_blank" rel="noreferrer" key={recordingUrl}>
-                                        {recordingUrl}
-                                      </a>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                              {detailRun.events?.length ? (
-                                <div>
-                                  <strong>Recent events</strong>
-                                  <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                                    {detailRun.events.map((event) => (
-                                      <details key={event.id}>
-                                        <summary>
-                                          {new Date(event.createdAt).toLocaleString()} • {event.level} • {event.message}
-                                        </summary>
-                                        {event.payload !== undefined && event.payload !== null ? (
-                                          <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                            {stringifyDebugValue(event.payload)}
-                                          </pre>
-                                        ) : (
-                                          <div className="small" style={{ marginTop: 8 }}>
-                                            No payload
-                                          </div>
-                                        )}
-                                      </details>
-                                    ))}
-                                  </div>
-                                </div>
-                              ) : null}
-                              {anchor?.raw !== undefined ? (
-                                <details>
-                                  <summary>Latest Anchor payload</summary>
-                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                    {stringifyDebugValue(anchor.raw)}
-                                  </pre>
-                                </details>
-                              ) : null}
-                              {browserbase?.raw !== undefined ? (
-                                <details>
-                                  <summary>Latest Browserbase payload</summary>
-                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                    {stringifyDebugValue(browserbase.raw)}
-                                  </pre>
-                                </details>
-                              ) : null}
-                              {stagehand?.actions?.length ? (
-                                <details>
-                                  <summary>Stagehand actions</summary>
-                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                    {stringifyDebugValue(stagehand.actions)}
-                                  </pre>
-                                </details>
-                              ) : null}
-                              {stagehand?.snapshot?.dataUrl ? (
-                                <details open>
-                                  <summary>Stagehand snapshot{stagehand.snapshot.label ? ` (${stagehand.snapshot.label})` : ""}</summary>
-                                  <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
-                                    <img
-                                      src={stagehand.snapshot.dataUrl}
-                                      alt={stagehand.snapshot.label || "Stagehand browser snapshot"}
-                                      style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)" }}
-                                    />
-                                  </div>
-                                </details>
-                              ) : null}
-                              {stagehand?.snapshot?.error ? (
-                                <div className="small">Snapshot error: {stagehand.snapshot.error}</div>
-                              ) : null}
-                              {stagehand?.ai?.length ? (
-                                <details>
-                                  <summary>Stagehand AI notes</summary>
-                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                    {stringifyDebugValue(stagehand.ai)}
-                                  </pre>
-                                </details>
-                              ) : null}
-                              {stagehand?.raw !== undefined ? (
-                                <details>
-                                  <summary>Latest Stagehand payload</summary>
-                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
-                                    {stringifyDebugValue(stagehand.raw)}
-                                  </pre>
-                                </details>
-                              ) : null}
-                            </div>
-                          );
-                        })()}
-                      </td>
-                    </tr>
-                  ) : null}
-                </Fragment>
-              ))}
-              {automationRuns.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="small">
-                    No apply tasks yet
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-
-          <h2 style={{ marginTop: 24 }}>Submitted Applications</h2>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Role</th>
-                <th>Company</th>
-                <th>Location</th>
-                <th>Status</th>
-                <th>Resume</th>
-                <th>Submitted</th>
-              </tr>
-            </thead>
-            <tbody>
-              {applications.map((app) => (
-                <tr key={app.id}>
-                  <td>{app.job.title}</td>
-                  <td>{app.job.company}</td>
-                  <td>{app.job.location}</td>
-                  <td>{app.status}</td>
-                  <td>{app.hasResumeFile ? "PDF attached" : "None"}</td>
-                  <td>{new Date(app.createdAt).toLocaleString()}</td>
-                </tr>
-              ))}
-              {applications.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="small">
-                    No applications yet
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </section>
+        <TrackingSurface
+          automationRuns={automationRuns}
+          applications={applications}
+          expandedRunId={expandedRunId}
+          runDetailsById={runDetailsById}
+          loadingRunDetailsId={loadingRunDetailsId}
+          runAnswerDrafts={runAnswerDrafts}
+          answeringRunId={answeringRunId}
+          actingRunId={actingRunId}
+          onToggleRunDetails={(runId) => void toggleRunDetails(runId)}
+          onRunAnswerDraftChange={(runId, value) =>
+            setRunAnswerDrafts((prev) => ({
+              ...prev,
+              [runId]: value
+            }))
+          }
+          onSubmitRunAnswer={(run) => void submitRunAnswer(run)}
+          onPerformRunAction={(run, action) => void performRunAction(run, action)}
+          stringifyDebugValue={stringifyDebugValue}
+        />
       ) : null}
 
       {DEV_TOOLS_ENABLED && activeTab === "dev" ? (

@@ -319,6 +319,130 @@ button.text-button:hover:not(:disabled) {
     linear-gradient(140deg, rgba(14, 116, 144, 0.05), transparent);
 }
 
+.profile-surface,
+.tracking-surface {
+  gap: 24px;
+}
+
+.profile-surface-head,
+.tracking-surface-head {
+  align-items: stretch;
+}
+
+.profile-readiness {
+  min-width: 220px;
+  padding: 16px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(21, 94, 239, 0.08), rgba(14, 116, 144, 0.08));
+  border: 1px solid rgba(21, 94, 239, 0.14);
+  display: grid;
+  gap: 6px;
+}
+
+.profile-readiness-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.profile-assets {
+  display: grid;
+  gap: 8px;
+}
+
+.profile-surface-actions {
+  align-items: center;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+}
+
+.status-chip-neutral {
+  background: rgba(16, 32, 51, 0.06);
+  color: #36516f;
+}
+
+.status-chip-info {
+  background: rgba(21, 94, 239, 0.08);
+  border-color: rgba(21, 94, 239, 0.14);
+  color: var(--accent-strong);
+}
+
+.status-chip-success {
+  background: rgba(15, 159, 110, 0.1);
+  border-color: rgba(15, 159, 110, 0.18);
+  color: var(--success);
+}
+
+.status-chip-warn {
+  background: rgba(251, 191, 36, 0.16);
+  border-color: rgba(217, 119, 6, 0.16);
+  color: #9a6700;
+}
+
+.status-chip-danger {
+  background: rgba(229, 72, 77, 0.1);
+  border-color: rgba(229, 72, 77, 0.16);
+  color: var(--danger);
+}
+
+.tracking-run-stack,
+.tracking-detail-stack,
+.tracking-events-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tracking-inline-actions,
+.tracking-chip-row,
+.tracking-link-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tracking-summary-card {
+  padding: 16px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(133, 155, 183, 0.22);
+  display: grid;
+  gap: 8px;
+}
+
+.tracking-pre {
+  white-space: pre-wrap;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(16, 32, 51, 0.04);
+  border: 1px solid rgba(133, 155, 183, 0.18);
+  overflow-x: auto;
+}
+
+.tracking-snapshot-panel {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.tracking-snapshot-image {
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+}
+
 .swipe-board {
   max-width: 680px;
   margin: 0 auto;
