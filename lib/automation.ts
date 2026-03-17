@@ -18,6 +18,7 @@ import {
 } from "@/lib/automation-sites";
 import {
   ensureAutomationSupportCase,
+  getMergedAutomationAnswers,
   persistReusableAnswer,
   updateAutomationSupportCaseOutcome
 } from "@/lib/automation-state";
@@ -147,8 +148,11 @@ export async function getAutomationRunDetails(runId: number) {
     return null;
   }
 
+  const answerMemory = await getMergedAutomationAnswers(run.siteType as AutomationSiteType, parseAutomationAnswers(run));
+
   return {
     ...serializeAutomationRun(run),
+    answerMemory,
     events: run.events.map(serializeAutomationEvent)
   };
 }

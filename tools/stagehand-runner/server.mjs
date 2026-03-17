@@ -17,6 +17,9 @@ const PLAYWRIGHT_HEADLESS = process.env.STAGEHAND_HEADLESS !== '0';
 const OLLAMA_BASE_URL = process.env.STAGEHAND_OLLAMA_BASE_URL || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 const RAW_STAGEHAND_MODEL = process.env.STAGEHAND_OLLAMA_MODEL || process.env.OLLAMA_MODEL || 'qwen2.5:7b';
 const STAGEHAND_MODEL = String(RAW_STAGEHAND_MODEL || 'qwen2.5:7b').replace(/^ollama\//i, '');
+const PLAYWRIGHT_SLOW_MO_MS = Number(process.env.STAGEHAND_SLOW_MO_MS || (PLAYWRIGHT_HEADLESS ? 0 : 700));
+const HEADFUL_PAUSE_BEFORE_SUBMIT_MS = Number(process.env.STAGEHAND_HEADFUL_PAUSE_BEFORE_SUBMIT_MS || (PLAYWRIGHT_HEADLESS ? 0 : 5000));
+const HEADFUL_PAUSE_BEFORE_CLOSE_MS = Number(process.env.STAGEHAND_HEADFUL_PAUSE_BEFORE_CLOSE_MS || (PLAYWRIGHT_HEADLESS ? 0 : 5000));
 const MODEL_CONFIG = {
   modelName: `ollama/${STAGEHAND_MODEL}`,
   baseURL: OLLAMA_BASE_URL
@@ -28,6 +31,8 @@ const PROFILE_TEMP_PREFIX = 'stagehand-v3-profile-';
 const REPO_ROOT = path.dirname(fileURLToPath(new URL('../../package.json', import.meta.url)));
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 const MANUAL_ATTENTION_CATEGORIES = new Set(['human_check', 'login_required', 'form_not_reached', 'unsupported_flow', 'state_disagreement']);
+const LIVE_PREVIEW_MAX_AGE_MS = Number(process.env.STAGEHAND_LIVE_PREVIEW_MAX_AGE_MS || 10 * 60 * 1000);
+const livePreviewRuns = new Map();
 
 function jsonResponse(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -58,6 +63,10 @@ function firstNonEmpty(...values) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeQuestionKey(value) {
+  return normalizeWhitespace(value).toLowerCase().replace(/[*:]+/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function safeJsonParse(text) {
@@ -116,7 +125,7 @@ async function cleanupRepoProfileArtifacts() {
 }
 
 async function fillFirstVisible(pageOrFrame, selectors, value) {
-  if (!value) return false;
+  if (!value) return { filled: false, reason: 'missing_value' };
 
   for (const selector of selectors) {
     const locator = pageOrFrame.locator(selector).first();
@@ -127,24 +136,29 @@ async function fillFirstVisible(pageOrFrame, selectors, value) {
     if (tagName === 'select') {
       const success = await locator
         .selectOption({ label: value })
-        .then(() => true)
-        .catch(async () => locator.selectOption({ value }).then(() => true).catch(() => false));
-      if (success) return true;
+        .then(() => ({ filled: true, method: 'selectOption', selector, tagName }))
+        .catch(async () =>
+          locator
+            .selectOption({ value })
+            .then(() => ({ filled: true, method: 'selectOption', selector, tagName }))
+            .catch(() => ({ filled: false, reason: 'select_option_not_found', selector, tagName }))
+        );
+      if (success.filled) return success;
       continue;
     }
 
     await locator.fill(value).catch(() => {});
-    return true;
+    return { filled: true, method: 'fill', selector, tagName };
   }
 
-  return false;
+  return { filled: false, reason: 'control_not_found' };
 }
 
 async function uploadFirstFile(pageOrFrame, filePath) {
   const input = pageOrFrame.locator('input[type="file"]').first();
-  if ((await input.count()) === 0) return false;
+  if ((await input.count()) === 0) return { uploaded: false, reason: 'file_input_not_found' };
   await input.setInputFiles(filePath);
-  return true;
+  return { uploaded: true, selector: 'input[type="file"]' };
 }
 
 async function getComeetFormScope(page) {
@@ -182,13 +196,128 @@ async function hasVisibleFormInputs(pageOrFrame) {
   return false;
 }
 
-async function fillBlockingAnswer(page, question, answer) {
+async function collectQuestionOptions(page, question) {
+  if (!question) return [];
+
+  return page.evaluate((rawQuestion) => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/[*:]+/g, '');
+    const visible = (element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== 'none' && style.visibility !== 'hidden';
+    };
+
+    const findQuestionContainer = (questionKey) => {
+      const labels = Array.from(document.querySelectorAll('label, legend, h3, h4, .application-label'));
+      const match = labels.find((node) => {
+        const labelText = normalize(node.textContent || '');
+        return labelText && (labelText.includes(questionKey) || questionKey.includes(labelText));
+      });
+      if (!match) return null;
+
+      let current = match.parentElement;
+      while (current && current !== document.body) {
+        const controls = Array.from(current.querySelectorAll('input, textarea, select')).filter((control) => visible(control));
+        if (controls.length > 0 && controls.length <= 20) return current;
+        current = current.parentElement;
+      }
+
+      return match.parentElement;
+    };
+
+    const questionKey = normalize(rawQuestion);
+    const container = findQuestionContainer(questionKey);
+    if (!container) return [];
+
+    const controls = Array.from(container.querySelectorAll('input, textarea, select')).filter((control) => visible(control));
+    for (const control of controls) {
+      if (!(control instanceof HTMLElement)) continue;
+      const type = control.getAttribute('type') || '';
+      if (['hidden', 'submit', 'button', 'file'].includes(type)) continue;
+
+      if (control instanceof HTMLSelectElement) {
+        return Array.from(control.options)
+          .map((option) => (option.textContent || option.value || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+      }
+
+      if (control instanceof HTMLInputElement && (control.type === 'radio' || control.type === 'checkbox')) {
+        const options = Array.from(container.querySelectorAll(`input[name="${CSS.escape(control.name)}"]`))
+          .map((item) => {
+            if (!(item instanceof HTMLInputElement)) return '';
+            const optionContainer = item.closest('label, li, div') || item.parentElement;
+            return (optionContainer?.textContent || item.value || '').replace(/\s+/g, ' ').trim();
+          })
+          .filter(Boolean);
+        return Array.from(new Set(options));
+      }
+    }
+
+    return [];
+  }, question);
+}
+
+async function resolveAnswerOption(stagehand, page, question, answer, options, debug) {
+  if (!question || !answer || !Array.isArray(options) || options.length === 0) return '';
+
+  const exact = options.find((option) => normalizeWhitespace(option).toLowerCase() === normalizeWhitespace(answer).toLowerCase());
+  if (exact) return exact;
+
+  const normalizedAnswer = normalizeWhitespace(answer).toLowerCase();
+  const heuristicMatches = [
+    {
+      answer: /(linkedin|facebook|instagram|x|twitter|social)/,
+      option: /(social media|job advertising)/i
+    },
+    {
+      answer: /(friend|referral|colleague|coworker|co-worker)/,
+      option: /\bfriend\b/i
+    },
+    {
+      answer: /(article|interview|podcast|blog|news)/,
+      option: /(article|interview|podcast)/i
+    },
+    {
+      answer: /(other|else|misc)/,
+      option: /\bother\b/i
+    }
+  ];
+  for (const matcher of heuristicMatches) {
+    if (!matcher.answer.test(normalizedAnswer)) continue;
+    const heuristicOption = options.find((option) => matcher.option.test(option));
+    if (heuristicOption) return heuristicOption;
+  }
+
+  const result = await safeExtract(
+    stagehand,
+    [
+      `Map a user's answer to one of the provided application form options for the question "${question}".`,
+      `User answer: "${answer}".`,
+      `Options: ${options.map((option) => `"${option}"`).join(', ')}.`,
+      'Return the single best matching option label exactly as provided. If none fit, return an empty string.'
+    ].join(' '),
+    {
+      matchedOption: 'string',
+      reasoning: 'string'
+    },
+    page,
+    debug,
+    'answer-option-match'
+  );
+
+  const matched = normalizeWhitespace(result?.matchedOption || '');
+  return options.find((option) => normalizeWhitespace(option) === matched) || '';
+}
+
+async function fillBlockingAnswer(page, question, answer, mappedOption = '') {
   if (!question || !answer) return false;
 
   return page.evaluate(
-    ({ rawQuestion, rawAnswer }) => {
-      const question = rawQuestion.trim().toLowerCase();
+    ({ rawQuestion, rawAnswer, rawMappedOption }) => {
+      const normalizeQuestion = (value) => value.replace(/\s+/g, ' ').trim().toLowerCase().replace(/[*:]+/g, '');
+      const question = normalizeQuestion(rawQuestion);
       const answer = rawAnswer.trim();
+      const mappedOption = rawMappedOption.trim();
       if (!question || !answer) return false;
 
       const visible = (element) => {
@@ -198,26 +327,35 @@ async function fillBlockingAnswer(page, question, answer) {
       };
 
       const normalize = (value) => value.replace(/\s+/g, ' ').trim().toLowerCase();
-      const controls = Array.from(document.querySelectorAll('input, textarea, select'));
+      const findQuestionContainer = (questionKey) => {
+        const labels = Array.from(document.querySelectorAll('label, legend, h3, h4, .application-label'));
+        const match = labels.find((node) => {
+          const labelText = normalizeQuestion(node.textContent || '');
+          return labelText && (labelText.includes(questionKey) || questionKey.includes(labelText));
+        });
+        if (!match) return null;
 
+        let current = match.parentElement;
+        while (current && current !== document.body) {
+          const controls = Array.from(current.querySelectorAll('input, textarea, select')).filter((control) => visible(control));
+          if (controls.length > 0 && controls.length <= 20) return current;
+          current = current.parentElement;
+        }
+
+        return match.parentElement;
+      };
+
+      const container = findQuestionContainer(question);
+      if (!container) return false;
+
+      const controls = Array.from(container.querySelectorAll('input, textarea, select'));
       for (const control of controls) {
         if (!(control instanceof HTMLElement) || !visible(control)) continue;
         const type = control.getAttribute('type') || '';
         if (['hidden', 'submit', 'button', 'file'].includes(type)) continue;
 
-        const container =
-          control.closest('.application-question, .application-field, fieldset, .application-page, .posting-page') ||
-          control.parentElement;
-        const labelNode = container?.querySelector('label, legend, h3, h4, .application-label');
-        const labelText = normalize(labelNode?.textContent || '');
-        const ariaLabel = normalize(control.getAttribute('aria-label') || '');
-        const name = normalize(control.getAttribute('name') || '');
-        if (!labelText.includes(question) && !ariaLabel.includes(question) && !name.includes(question)) {
-          continue;
-        }
-
         if (control instanceof HTMLSelectElement) {
-          const desired = normalize(answer);
+          const desired = normalize(mappedOption || answer);
           const option = Array.from(control.options).find((item) => normalize(item.textContent || item.value) === desired);
           if (option) {
             control.value = option.value;
@@ -229,11 +367,11 @@ async function fillBlockingAnswer(page, question, answer) {
         }
 
         if (control instanceof HTMLInputElement && (control.type === 'radio' || control.type === 'checkbox')) {
-          const group = Array.from(document.querySelectorAll(`input[name="${CSS.escape(control.name)}"]`));
-          const normalizedAnswer = normalize(answer);
+          const group = Array.from(container.querySelectorAll(`input[name="${CSS.escape(control.name)}"]`));
+          const normalizedAnswer = normalize(mappedOption || answer);
           const candidate = group.find((item) => {
             if (!(item instanceof HTMLInputElement)) return false;
-            const optionContainer = item.closest('label, .application-question, .application-field, fieldset') || item.parentElement;
+            const optionContainer = item.closest('label, li, div') || item.parentElement;
             const optionText = normalize(optionContainer?.textContent || '');
             return optionText.includes(normalizedAnswer) || normalize(item.value).includes(normalizedAnswer);
           });
@@ -256,7 +394,7 @@ async function fillBlockingAnswer(page, question, answer) {
 
       return false;
     },
-    { rawQuestion: question, rawAnswer: answer }
+    { rawQuestion: question, rawAnswer: answer, rawMappedOption: mappedOption }
   );
 }
 
@@ -392,26 +530,160 @@ function attachBlocker(debug, category, detail, options = {}) {
   return blocker;
 }
 
-async function captureTerminalSnapshot(page, debug, label) {
+async function captureSnapshot(page, debug, label, options = {}) {
   if (!page) return;
+  const snapshot = { label };
   try {
-    const buffer = await page.screenshot({
-      type: 'jpeg',
-      quality: 55,
-      fullPage: false,
-      animations: 'disabled'
-    });
-    debug.snapshot = {
-      label,
-      mimeType: 'image/jpeg',
-      dataUrl: `data:image/jpeg;base64,${buffer.toString('base64')}`
-    };
+    const rendered = await renderSnapshotBuffer(page, options);
+    if (!rendered) throw new Error('Snapshot target was not available');
+    const { buffer, mimeType } = rendered;
+    snapshot.mimeType = mimeType;
+    snapshot.dataUrl = `data:${snapshot.mimeType};base64,${buffer.toString('base64')}`;
   } catch (error) {
-    debug.snapshot = {
-      label,
-      error: stringifyError(error)
-    };
+    snapshot.error = stringifyError(error);
   }
+  if (!Array.isArray(debug.snapshots)) debug.snapshots = [];
+  debug.snapshots.push(snapshot);
+  debug.snapshot = snapshot;
+}
+
+async function captureScopedSnapshot(pageOrFrame, debug, label, options = {}) {
+  if (!pageOrFrame?.locator) return captureSnapshot(pageOrFrame, debug, label, options);
+  const snapshot = { label };
+  try {
+    const rendered = await renderSnapshotBuffer(pageOrFrame, options);
+    if (!rendered) throw new Error('Snapshot target was not available');
+    const { buffer, mimeType } = rendered;
+    snapshot.mimeType = mimeType;
+    snapshot.dataUrl = `data:${snapshot.mimeType};base64,${buffer.toString('base64')}`;
+  } catch (error) {
+    snapshot.error = stringifyError(error);
+  }
+  if (!Array.isArray(debug.snapshots)) debug.snapshots = [];
+  debug.snapshots.push(snapshot);
+  debug.snapshot = snapshot;
+}
+
+async function renderSnapshotBuffer(pageOrFrame, options = {}) {
+  if (!pageOrFrame?.screenshot && !pageOrFrame?.locator) return null;
+  const type = options.type || 'jpeg';
+  const mimeType = type === 'png' ? 'image/png' : 'image/jpeg';
+  if (pageOrFrame?.locator) {
+    let target = pageOrFrame.locator(options.selector || 'form').first();
+    let count = await target.count().catch(() => 0);
+    if (count === 0) {
+      target = pageOrFrame.locator('body').first();
+      count = await target.count().catch(() => 0);
+    }
+    if (count > 0) {
+      await target.scrollIntoViewIfNeeded().catch(() => {});
+      const buffer = await target.screenshot({
+        type,
+        quality: type === 'jpeg' ? 70 : undefined,
+        animations: 'disabled'
+      });
+      return { buffer, mimeType };
+    }
+  }
+
+  if (!pageOrFrame?.screenshot) {
+    return null;
+  }
+  const buffer = await pageOrFrame.screenshot({
+    type,
+    quality: type === 'jpeg' ? 55 : undefined,
+    fullPage: Boolean(options.fullPage),
+    animations: 'disabled'
+  });
+  return { buffer, mimeType };
+}
+
+function setLivePreviewFrame(runId, frame) {
+  if (!Number.isFinite(runId)) return;
+  livePreviewRuns.set(runId, {
+    ...livePreviewRuns.get(runId),
+    ...frame,
+    status: frame.status || livePreviewRuns.get(runId)?.status || 'running',
+    updatedAt: Date.now()
+  });
+}
+
+function markLivePreviewStatus(runId, status, extra = {}) {
+  if (!Number.isFinite(runId)) return;
+  livePreviewRuns.set(runId, {
+    ...livePreviewRuns.get(runId),
+    runId,
+    status,
+    updatedAt: Date.now(),
+    ...extra
+  });
+}
+
+function clearExpiredLivePreviews() {
+  const now = Date.now();
+  for (const [runId, preview] of livePreviewRuns.entries()) {
+    if (!preview?.updatedAt || now - preview.updatedAt > LIVE_PREVIEW_MAX_AGE_MS) {
+      livePreviewRuns.delete(runId);
+    }
+  }
+}
+
+function startLivePreview(runId, getScope, getLabel) {
+  if (!Number.isFinite(runId)) {
+    return { stop: () => {} };
+  }
+
+  let active = true;
+  let pending = false;
+
+  const tick = async () => {
+    if (!active || pending) return;
+    pending = true;
+    try {
+      const scope = getScope();
+      const rendered = await renderSnapshotBuffer(scope, {});
+      if (rendered?.buffer) {
+        setLivePreviewFrame(runId, {
+          runId,
+          mimeType: rendered.mimeType,
+          buffer: rendered.buffer,
+          label: getLabel?.() || null
+        });
+      }
+    } catch (error) {
+      markLivePreviewStatus(runId, 'error', { error: stringifyError(error) });
+    } finally {
+      pending = false;
+    }
+  };
+
+  tick().catch(() => {});
+  const intervalId = setInterval(() => {
+    tick().catch(() => {});
+  }, 1500);
+
+  return {
+    stop(finalStatus = 'finished') {
+      active = false;
+      clearInterval(intervalId);
+      const existing = livePreviewRuns.get(runId) || {};
+      livePreviewRuns.set(runId, {
+        ...existing,
+        runId,
+        status: finalStatus,
+        updatedAt: Date.now()
+      });
+    }
+  };
+}
+
+async function scrollComeetFormIntoView(page) {
+  await page.locator('#applyFormWrapper, form').first().scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(250).catch(() => {});
+}
+
+async function captureTerminalSnapshot(page, debug, label, pageOrFrame = null) {
+  await captureScopedSnapshot(pageOrFrame || page, debug, label);
 }
 
 function createNeedsInput(category, detail, inputField, debug, extra = {}) {
@@ -566,15 +838,21 @@ async function runComeet(input) {
   const job = input?.run?.job || input?.job || {};
   const profile = input?.profile || {};
   const answers = input?.run?.answers || {};
+  const runId = Number(input?.run?.id);
   const debug = {
     provider: 'stagehand-local',
     model: `ollama/${STAGEHAND_MODEL}`,
     baseUrl: OLLAMA_BASE_URL,
+    headless: PLAYWRIGHT_HEADLESS,
+    answersUsed: Object.fromEntries(
+      Object.entries(answers).filter((entry) => typeof entry[1] === 'string' && String(entry[1]).trim())
+    ),
     blocker: null,
     actions: [],
     ai: [],
     finalUrl: job.url || '',
-    raw: {}
+    raw: {},
+    snapshots: []
   };
 
   let stagehand;
@@ -582,8 +860,17 @@ async function runComeet(input) {
   let page;
   let tempDir = null;
   let profileDir = null;
+  let livePreview = null;
+  let liveScope = null;
+  let liveLabel = 'booting';
 
   try {
+    clearExpiredLivePreviews();
+    markLivePreviewStatus(runId, 'starting', {
+      runId,
+      label: liveLabel,
+      finalUrl: job.url || ''
+    });
     await cleanupRepoProfileArtifacts();
     profileDir = await createBrowserProfileDir();
     stagehand = new Stagehand({
@@ -593,9 +880,11 @@ async function runComeet(input) {
       verbose: 0,
       localBrowserLaunchOptions: {
         headless: PLAYWRIGHT_HEADLESS,
+        slowMo: PLAYWRIGHT_SLOW_MO_MS,
         executablePath: PLAYWRIGHT_EXECUTABLE_PATH,
         userDataDir: profileDir,
-        preserveUserDataDir: false
+        preserveUserDataDir: false,
+        args: ['--new-window', '--start-maximized']
       }
     });
 
@@ -603,10 +892,24 @@ async function runComeet(input) {
     browser = await chromium.connectOverCDP(stagehand.connectURL());
     const context = browser.contexts()[0] || (await browser.newContext());
     page = context.pages()[0] || (await context.newPage());
+    liveScope = page;
+    livePreview = startLivePreview(runId, () => liveScope || page, () => liveLabel);
+    markLivePreviewStatus(runId, 'running', { runId, finalUrl: page.url() });
+    const initialPreview = await renderSnapshotBuffer(page, {});
+    if (initialPreview?.buffer) {
+      setLivePreviewFrame(runId, {
+        runId,
+        mimeType: initialPreview.mimeType,
+        buffer: initialPreview.buffer,
+        label: liveLabel,
+        status: 'running'
+      });
+    }
 
     await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     debug.finalUrl = page.url();
+    markLivePreviewStatus(runId, 'running', { finalUrl: debug.finalUrl });
 
     // Stagehand owns page-state reasoning and entry-point understanding before deterministic form control starts.
     const entryState = await safeExtract(
@@ -628,6 +931,7 @@ async function runComeet(input) {
     );
 
     let formScope = await getComeetFormScope(page).catch(() => page);
+    liveScope = formScope;
     const hasFormBeforeClick = await hasVisibleFormInputs(formScope);
     if (
       STRICT_STATE_DISAGREEMENT &&
@@ -644,8 +948,10 @@ async function runComeet(input) {
     }
 
     if (!hasFormBeforeClick) {
+      liveLabel = 'opening-application-form';
       const clickResult = await clickBestApplyEntry(page, entryState?.bestApplyCtaText || '', debug);
       formScope = await getComeetFormScope(page).catch(() => page);
+      liveScope = formScope;
       const hasFormAfterClick = await hasVisibleFormInputs(formScope);
       if (!hasFormAfterClick) {
         const postClickState = await safeExtract(
@@ -715,50 +1021,94 @@ async function runComeet(input) {
       }
     }
 
+    liveLabel = 'form-opened';
+    await scrollComeetFormIntoView(page);
+    await captureScopedSnapshot(formScope, debug, 'form-opened');
+
     const resumeFile = await writeResumeTempFile(profile);
     tempDir = resumeFile?.tempDir || null;
     const { firstName, lastName, fullName } = splitFullName(profile.fullName || '');
 
-    debug.actions.push({ type: 'fill', target: 'contact_fields' });
-    await fillFirstVisible(formScope, ['input[name*="first" i]', 'input[autocomplete="given-name"]'], firstName);
-    await fillFirstVisible(formScope, ['input[name*="last" i]', 'input[autocomplete="family-name"]'], lastName);
-    await fillFirstVisible(formScope, ['input[name="name"]', 'input[autocomplete="name"]'], fullName);
-    await fillFirstVisible(formScope, ['input[name*="email" i]', 'input[type="email"]'], profile.email || '');
-    await fillFirstVisible(formScope, ['input[name*="phone" i]', 'input[type="tel"]'], profile.phone || '');
-    await fillFirstVisible(formScope, ['input[name*="linkedin" i]', 'input[aria-label*="linkedin" i]'], profile.linkedInUrl || '');
-    await fillFirstVisible(
+    const fillResultFirstName = await fillFirstVisible(formScope, ['input[name*="first" i]', 'input[autocomplete="given-name"]'], firstName);
+    const fillResultLastName = await fillFirstVisible(formScope, ['input[name*="last" i]', 'input[autocomplete="family-name"]'], lastName);
+    const fillResultFullName = await fillFirstVisible(formScope, ['input[name="name"]', 'input[autocomplete="name"]'], fullName);
+    const fillResultEmail = await fillFirstVisible(formScope, ['input[name*="email" i]', 'input[type="email"]'], profile.email || '');
+    const fillResultPhone = await fillFirstVisible(formScope, ['input[name*="phone" i]', 'input[type="tel"]'], profile.phone || '');
+    const fillResultLinkedIn = await fillFirstVisible(formScope, ['input[name*="linkedin" i]', 'input[aria-label*="linkedin" i]'], profile.linkedInUrl || '');
+    const fillResultPortfolio = await fillFirstVisible(
       formScope,
       ['input[name*="github" i]', 'input[name*="website" i]', 'input[name*="portfolio" i]'],
       firstNonEmpty(profile.githubUrl, profile.portfolioUrl)
     );
-    await fillFirstVisible(
+    const fillResultLocation = await fillFirstVisible(
       formScope,
       ['input[name*="location" i]', 'input[aria-label*="location" i]', 'input[name*="city" i]'],
       firstPreferredLocation(profile)
     );
 
+    debug.actions.push({
+      type: 'fill',
+      target: 'contact_fields',
+      fields: {
+        firstName: fillResultFirstName,
+        lastName: fillResultLastName,
+        fullName: fillResultFullName,
+        email: fillResultEmail,
+        phone: fillResultPhone,
+        linkedIn: fillResultLinkedIn,
+        portfolio: fillResultPortfolio,
+        location: fillResultLocation
+      }
+    });
+    liveLabel = 'contact-fields-filled';
+    await scrollComeetFormIntoView(page);
+    await captureScopedSnapshot(formScope, debug, 'contact-fields-filled');
+
     for (const [question, answer] of Object.entries(answers)) {
-      await fillBlockingAnswer(formScope, question, String(answer || ''));
+      const options = await collectQuestionOptions(formScope, question);
+      const mappedOption = options.length > 0 ? await resolveAnswerOption(stagehand, formScope, question, String(answer || ''), options, debug) : '';
+      const applied = await fillBlockingAnswer(formScope, question, String(answer || ''), mappedOption);
+      debug.actions.push({
+        type: 'answer_memory_fill',
+        question,
+        answer,
+        options,
+        mappedOption: mappedOption || null,
+        applied,
+        reused: true
+      });
+    }
+    if (Object.keys(debug.answersUsed).length > 0) {
+      liveLabel = 'saved-answers-applied';
+      await scrollComeetFormIntoView(page);
+      await captureScopedSnapshot(formScope, debug, 'saved-answers-applied');
     }
 
     if (!resumeFile?.filePath) {
       debug.finalUrl = page.url();
-      await captureTerminalSnapshot(page, debug, 'missing-resume');
+      await captureTerminalSnapshot(page, debug, 'missing-resume', formScope);
       return createNeedsInput('resume_upload', 'A PDF resume is required before automation can continue.', 'resume_upload', debug);
     }
 
     // From here on, Playwright owns deterministic field fill, upload, and submit behavior.
-    debug.actions.push({ type: 'upload', target: resumeFile.fileName });
-    const fileUploaded =
-      (await uploadFirstFile(formScope, resumeFile.filePath)) ||
-      (await (async () => {
+    const uploadResultPrimary = await uploadFirstFile(formScope, resumeFile.filePath);
+    let uploadResult = uploadResultPrimary;
+    if (!uploadResultPrimary.uploaded) {
+      uploadResult = await (async () => {
         const input = formScope
           .locator('input[name*="resume" i][type="file"], input[name*="cv" i][type="file"], input[name*="attachment" i][type="file"]')
           .first();
-        if ((await input.count()) === 0) return false;
+        if ((await input.count()) === 0) return { uploaded: false, reason: 'named_file_input_not_found' };
         await input.setInputFiles(resumeFile.filePath);
-        return true;
-      })());
+        return { uploaded: true, selector: 'named_resume_file_input' };
+      })();
+    }
+    debug.actions.push({ type: 'upload', target: resumeFile.fileName, result: uploadResult });
+    if (uploadResult.uploaded) {
+      liveLabel = 'resume-uploaded';
+      await scrollComeetFormIntoView(page);
+      await captureScopedSnapshot(formScope, debug, 'resume-uploaded');
+    }
 
     const blockingQuestion = await findBlockingQuestion(formScope);
     if (blockingQuestion) {
@@ -766,15 +1116,15 @@ async function runComeet(input) {
       const detail = firstNonEmpty(interpreted?.detail, blockingQuestion);
       const category = classifyBlockerCategory(interpreted?.category || detail, 'missing_answer');
       debug.finalUrl = page.url();
-      await captureTerminalSnapshot(page, debug, 'missing-required-answer');
+      await captureTerminalSnapshot(page, debug, 'missing-required-answer', formScope);
       return createNeedsInput(category, detail, blockingQuestion, debug, {
         interpretedQuestion: interpreted
       });
     }
 
-    if (!fileUploaded) {
+    if (!uploadResult.uploaded) {
       debug.finalUrl = page.url();
-      await captureTerminalSnapshot(page, debug, 'resume-upload-blocked');
+      await captureTerminalSnapshot(page, debug, 'resume-upload-blocked', formScope);
       return createNeedsInput(
         'resume_upload',
         'The Comeet form requires a resume upload that could not be completed automatically.',
@@ -788,7 +1138,7 @@ async function runComeet(input) {
       .first();
     if ((await submitButton.count()) === 0) {
       debug.finalUrl = page.url();
-      await captureTerminalSnapshot(page, debug, 'missing-submit-button');
+      await captureTerminalSnapshot(page, debug, 'missing-submit-button', formScope);
       return createNeedsInput(
         'unsupported_flow',
         'The application form is open, but no submit button was found.',
@@ -799,6 +1149,10 @@ async function runComeet(input) {
     }
 
     debug.actions.push({ type: 'click', target: 'submit' });
+    liveLabel = 'submitting';
+    if (HEADFUL_PAUSE_BEFORE_SUBMIT_MS > 0) {
+      await page.waitForTimeout(HEADFUL_PAUSE_BEFORE_SUBMIT_MS).catch(() => {});
+    }
     await submitButton.click();
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(1500);
@@ -827,7 +1181,7 @@ async function runComeet(input) {
         const interpreted = await interpretBlockingQuestion(stagehand, formScope, stillBlocking, debug);
         const detail = firstNonEmpty(interpreted?.detail, stillBlocking);
         const category = classifyBlockerCategory(interpreted?.category || detail, 'missing_answer');
-        await captureTerminalSnapshot(page, debug, 'submit-blocked');
+        await captureTerminalSnapshot(page, debug, 'submit-blocked', formScope);
         return createNeedsInput(category, detail, stillBlocking, debug, {
           diagnostics,
           interpretedQuestion: interpreted
@@ -837,7 +1191,7 @@ async function runComeet(input) {
         const rawValidationMessage = diagnostics.errors[0];
         const validationMessage = normalizeBlockingMessage(rawValidationMessage);
         const category = classifyBlockerCategory(validationMessage, 'validation_error');
-        await captureTerminalSnapshot(page, debug, category === 'human_check' ? 'human-check' : 'validation-error');
+        await captureTerminalSnapshot(page, debug, category === 'human_check' ? 'human-check' : 'validation-error', formScope);
         return createNeedsInput(
           category,
           validationMessage,
@@ -849,7 +1203,7 @@ async function runComeet(input) {
           }
         );
       }
-      await captureTerminalSnapshot(page, debug, 'submission-unconfirmed');
+      await captureTerminalSnapshot(page, debug, 'submission-unconfirmed', formScope);
       return createFailed(
         'submit_unconfirmed',
         `Could not confirm Comeet submission (${diagnostics.url || 'unknown state'})`,
@@ -858,9 +1212,13 @@ async function runComeet(input) {
       );
     }
 
-    await captureTerminalSnapshot(page, debug, 'submitted');
+    await captureTerminalSnapshot(page, debug, 'submitted', formScope);
     return createSubmitted('Application submitted successfully.', debug, { diagnostics });
   } finally {
+    if (HEADFUL_PAUSE_BEFORE_CLOSE_MS > 0) {
+      await page?.waitForTimeout(HEADFUL_PAUSE_BEFORE_CLOSE_MS).catch(() => {});
+    }
+    livePreview?.stop(debug.blocker?.category || 'finished');
     await browser?.close().catch(() => {});
     await stagehand?.close().catch(() => {});
     if (tempDir) {
@@ -883,6 +1241,7 @@ async function runAutomation(input) {
       provider: 'stagehand-local',
       model: `ollama/${STAGEHAND_MODEL}`,
       baseUrl: OLLAMA_BASE_URL,
+      headless: PLAYWRIGHT_HEADLESS,
       blocker: null,
       actions: [],
       ai: [],
@@ -896,6 +1255,7 @@ async function runAutomation(input) {
 
 const server = http.createServer(async (req, res) => {
   try {
+    clearExpiredLivePreviews();
     if (req.method === 'GET' && req.url === '/health') {
       return jsonResponse(res, 200, {
         ok: true,
@@ -909,6 +1269,26 @@ const server = http.createServer(async (req, res) => {
       const body = await readJsonBody(req);
       const result = await withTimeout(runAutomation(body), SERVER_TIMEOUT_MS, 'stagehand run');
       return jsonResponse(res, 200, result);
+    }
+
+    const liveFrameMatch = req.method === 'GET' ? req.url?.match(/^\/live\/(\d+)\/frame$/) : null;
+    if (liveFrameMatch) {
+      const runId = Number(liveFrameMatch[1]);
+      const preview = livePreviewRuns.get(runId);
+      if (!preview?.buffer || !preview?.mimeType) {
+        res.writeHead(404, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store, max-age=0' });
+        res.end(JSON.stringify({ message: 'Live preview not available' }));
+        return;
+      }
+
+      res.writeHead(200, {
+        'content-type': preview.mimeType,
+        'cache-control': 'no-store, max-age=0',
+        'x-live-preview-status': preview.status || 'running',
+        'x-live-preview-label': preview.label || ''
+      });
+      res.end(preview.buffer);
+      return;
     }
 
     return jsonResponse(res, 404, { message: 'Not found' });

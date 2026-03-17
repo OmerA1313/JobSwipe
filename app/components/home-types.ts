@@ -77,6 +77,7 @@ export type AutomationRunItem = {
   blockingQuestion?: string | null;
   inputField?: string | null;
   answers?: Record<string, string>;
+  answerMemory?: Record<string, string>;
   lastError?: string | null;
   manualActionUrl?: string;
   startedAt?: string | null;
@@ -108,6 +109,7 @@ export type AutomationRunItem = {
       model?: string;
       baseUrl?: string;
       finalUrl?: string;
+      headless?: boolean;
       blocker?: {
         category?: string;
         detail?: string;
@@ -122,6 +124,13 @@ export type AutomationRunItem = {
         dataUrl?: string;
         error?: string;
       };
+      snapshots?: Array<{
+        label?: string;
+        mimeType?: string;
+        dataUrl?: string;
+        error?: string;
+      }>;
+      answersUsed?: Record<string, string>;
       raw?: unknown;
     } | null;
   };

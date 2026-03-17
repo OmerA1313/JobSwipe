@@ -10,6 +10,7 @@
     "dev:share:stop": "bash scripts/dev-share.sh stop",
     "dev:share:status": "bash scripts/dev-share.sh status",
     "automation:stagehand": "node tools/stagehand-runner/server.mjs",
+    "automation:stagehand:live": "STAGEHAND_HEADLESS=0 node tools/stagehand-runner/server.mjs",
     "postinstall": "npm run prisma:generate",
     "build": "npm run prisma:generate && node node_modules/next/dist/bin/next build",
     "start": "node node_modules/next/dist/bin/next start",

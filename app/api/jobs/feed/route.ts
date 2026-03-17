@@ -52,17 +52,25 @@ export async function GET(req: Request) {
     });
 
     const rankedAll = rankJobsForFeed(profile, pending, { strictLocation, strictRole });
+    const supportedFallback = pending.filter((job) => {
+      const siteType = detectAutomationSite(job);
+      return getAutomationSiteSupport(siteType).autoApplyEnabled;
+    });
+    const mergedRanked = [
+      ...rankedAll,
+      ...supportedFallback.filter((job) => !rankedAll.some((ranked) => ranked.id === job.id))
+    ];
     const availableSources = Array.from(
       new Set(
-        rankedAll
+        mergedRanked
           .map((job) => (job.source ?? "").trim().toLowerCase())
           .filter(Boolean)
       )
     ).sort();
 
     const ranked = selectedSource
-      ? rankedAll.filter((job) => (job.source ?? "").trim().toLowerCase() === selectedSource)
-      : rankedAll;
+      ? mergedRanked.filter((job) => (job.source ?? "").trim().toLowerCase() === selectedSource)
+      : mergedRanked;
 
     const feedJobs = ranked.map((job) => {
       const sourceJob = pending.find((item: (typeof pending)[number]) => item.id === job.id);

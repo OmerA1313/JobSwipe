@@ -1,7 +1,31 @@
-import { Fragment } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 
 import { StatusChip } from "@/app/components/ui/status-chip";
 import type { ApplicationItem, AutomationRunItem } from "@/app/components/home-types";
+
+function LivePreviewImage({ runId, active }: { runId: number; active: boolean }) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (!active) return;
+    const interval = window.setInterval(() => {
+      setTick((value) => value + 1);
+    }, 1500);
+    return () => window.clearInterval(interval);
+  }, [active, runId]);
+
+  const src = useMemo(() => `/api/automation-runs/${runId}/live?tick=${tick}`, [runId, tick]);
+
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="tracking-snapshot-link">
+      <img
+        src={src}
+        alt="Live browser preview"
+        className="tracking-snapshot-image"
+      />
+    </a>
+  );
+}
 
 export function TrackingSurface({
   automationRuns,
@@ -119,6 +143,12 @@ export function TrackingSurface({
                       const anchor = detailRun.debug?.anchor;
                       const browserbase = detailRun.debug?.browserbase;
                       const stagehand = detailRun.debug?.stagehand;
+                      const stagehandSnapshots = stagehand?.snapshots?.length ? stagehand.snapshots : stagehand?.snapshot ? [stagehand.snapshot] : [];
+                      const savedAnswers = detailRun.answers && Object.keys(detailRun.answers).length > 0 ? detailRun.answers : null;
+                      const answerMemory = detailRun.answerMemory && Object.keys(detailRun.answerMemory).length > 0 ? detailRun.answerMemory : null;
+                      const snapshotUrl = (index: number) =>
+                        `/api/automation-runs/${detailRun.id}/snapshots/${index}?t=${encodeURIComponent(detailRun.updatedAt)}`;
+                      const showLivePreview = ["QUEUED", "RUNNING"].includes(detailRun.status) && Boolean(stagehand?.provider);
                       return (
                         <div className="tracking-detail-stack">
                           {loadingRunDetailsId === run.id ? <div className="small">Loading details...</div> : null}
@@ -131,31 +161,106 @@ export function TrackingSurface({
                             {browserbase?.sessionId ? <span className="chip">Browserbase session: {browserbase.sessionId}</span> : null}
                             {stagehand?.provider ? <span className="chip">Stagehand: {stagehand.provider}</span> : null}
                             {stagehand?.model ? <span className="chip">Model: {stagehand.model}</span> : null}
+                            {stagehand?.headless === false ? <span className="chip">Live local browser</span> : null}
                           </div>
                           <div className="tracking-link-row">
                             {anchor?.liveViewUrl ? <a href={anchor.liveViewUrl} target="_blank" rel="noreferrer">Open live view</a> : null}
                             {anchor?.cdpUrl ? <a href={anchor.cdpUrl} target="_blank" rel="noreferrer">Open CDP URL</a> : null}
                             {browserbase?.sessionUrl ? <a href={browserbase.sessionUrl} target="_blank" rel="noreferrer">Open Browserbase session</a> : null}
                             {browserbase?.replayUrl ? <a href={browserbase.replayUrl} target="_blank" rel="noreferrer">Open Browserbase replay</a> : null}
+                            {stagehand?.headless === false ? <span className="chip">Watch in local Chromium window</span> : null}
+                            {showLivePreview ? <a href={`/api/automation-runs/${detailRun.id}/live`} target="_blank" rel="noreferrer">Open live preview</a> : null}
                             {stagehand?.finalUrl ? <a href={stagehand.finalUrl} target="_blank" rel="noreferrer">Open final page</a> : null}
                             <a href={detailRun.job.url} target="_blank" rel="noreferrer">Open listing</a>
                           </div>
+                          {showLivePreview ? (
+                            <div className="tracking-summary-card">
+                              <strong>Live browser preview</strong>
+                              <p>This refreshes every 1.5s while the run is active.</p>
+                              <div className="tracking-snapshot-panel">
+                                <LivePreviewImage runId={detailRun.id} active={showLivePreview} />
+                              </div>
+                            </div>
+                          ) : null}
                           <div className="tracking-summary-card">
                             <StatusChip status={detailRun.requiresManualAttention ? "Manual attention" : detailRun.status} />
                             {detailRun.blockerCategory ? <span className="chip">Blocker: {detailRun.blockerCategory}</span> : null}
                             {stagehand?.blocker?.disagreement ? <span className="chip">AI/state disagreement</span> : null}
+                            {stagehandSnapshots.length ? <span className="chip">Snapshots: {stagehandSnapshots.length}</span> : null}
                             <strong>{detailRun.currentStep ?? detailRun.latestEvent?.message ?? "Run details"}</strong>
                             <p>{detailRun.blockerDetail ?? detailRun.blockingQuestion ?? detailRun.lastError ?? detailRun.latestEvent?.message ?? "No blocker recorded."}</p>
                           </div>
-                          {stagehand?.snapshot?.dataUrl ? (
-                            <details open>
-                              <summary>Stagehand snapshot{stagehand.snapshot.label ? ` (${stagehand.snapshot.label})` : ""}</summary>
+                          {stagehandSnapshots.length ? (
+                            <div className="tracking-summary-card">
+                              <strong>
+                                Latest browser snapshot
+                                {stagehandSnapshots[stagehandSnapshots.length - 1]?.label
+                                  ? ` · ${stagehandSnapshots[stagehandSnapshots.length - 1].label}`
+                                  : ""}
+                              </strong>
                               <div className="tracking-snapshot-panel">
-                                <img src={stagehand.snapshot.dataUrl} alt={stagehand.snapshot.label || "Stagehand browser snapshot"} className="tracking-snapshot-image" />
+                                <a
+                                  href={snapshotUrl(stagehandSnapshots.length - 1)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="tracking-snapshot-link"
+                                >
+                                  <img
+                                    src={snapshotUrl(stagehandSnapshots.length - 1)}
+                                    alt={stagehandSnapshots[stagehandSnapshots.length - 1].label || "Latest browser snapshot"}
+                                    className="tracking-snapshot-image"
+                                  />
+                                </a>
+                              </div>
+                            </div>
+                          ) : null}
+                          {savedAnswers ? (
+                            <details open>
+                              <summary>Answers saved on this run</summary>
+                              <pre className="tracking-pre">{stringifyDebugValue(savedAnswers)}</pre>
+                            </details>
+                          ) : null}
+                          {answerMemory ? (
+                            <details open>
+                              <summary>Merged answer memory available to the worker</summary>
+                              <pre className="tracking-pre">{stringifyDebugValue(answerMemory)}</pre>
+                            </details>
+                          ) : null}
+                          {stagehand?.answersUsed && Object.keys(stagehand.answersUsed).length > 0 ? (
+                            <details open>
+                              <summary>Answers the worker attempted to reuse</summary>
+                              <pre className="tracking-pre">{stringifyDebugValue(stagehand.answersUsed)}</pre>
+                            </details>
+                          ) : null}
+                          {stagehandSnapshots.length ? (
+                            <details open>
+                              <summary>Stagehand snapshot timeline</summary>
+                              <div className="tracking-snapshot-grid">
+                                {stagehandSnapshots.map((snapshot, index) => (
+                                  <div className="tracking-snapshot-card" key={`${snapshot.label || "snapshot"}-${index}`}>
+                                    <strong>{snapshot.label || `Snapshot ${index + 1}`}</strong>
+                                    {!snapshot.error ? (
+                                      <div className="tracking-snapshot-panel">
+                                        <a
+                                          href={snapshotUrl(index)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="tracking-snapshot-link"
+                                        >
+                                          <img
+                                            src={snapshotUrl(index)}
+                                            alt={snapshot.label || "Stagehand browser snapshot"}
+                                            className="tracking-snapshot-image"
+                                          />
+                                        </a>
+                                      </div>
+                                    ) : null}
+                                    {snapshot.error ? <div className="small">Snapshot error: {snapshot.error}</div> : null}
+                                  </div>
+                                ))}
                               </div>
                             </details>
                           ) : null}
-                          {stagehand?.snapshot?.error ? <div className="small">Snapshot error: {stagehand.snapshot.error}</div> : null}
                           {stagehand?.actions?.length ? (
                             <details open>
                               <summary>Action trace</summary>

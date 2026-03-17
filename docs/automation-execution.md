@@ -28,6 +28,9 @@ Use this path for the MVP.
 - Deterministic browser actions for fill, upload, and submit checks
 - `n8n/job-apply-stagehand-orchestrator.workflow.json` is the only supported orchestrator workflow
 - `tools/stagehand-runner/server.mjs` is the supported local executor
+- For live local watching, run the executor headful:
+  - `npm run automation:stagehand:live`
+  - or set `STAGEHAND_HEADLESS=0`
 
 Why this is active:
 

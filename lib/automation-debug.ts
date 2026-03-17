@@ -34,6 +34,8 @@ export type StagehandDebugSummary = {
   model?: string;
   baseUrl?: string;
   finalUrl?: string;
+  headless?: boolean;
+  answersUsed?: Record<string, string>;
   blocker?: {
     category?: string;
     detail?: string;
@@ -48,6 +50,12 @@ export type StagehandDebugSummary = {
     dataUrl?: string;
     error?: string;
   };
+  snapshots?: Array<{
+    label?: string;
+    mimeType?: string;
+    dataUrl?: string;
+    error?: string;
+  }>;
   raw?: unknown;
 };
 
@@ -168,6 +176,14 @@ export function extractStagehandDebug(events: AutomationEvent[]): StagehandDebug
     if (!merged.model && typeof record.model === "string") merged.model = record.model;
     if (!merged.baseUrl && typeof record.baseUrl === "string") merged.baseUrl = record.baseUrl;
     if (!merged.finalUrl) merged.finalUrl = normalizeUrl(record.finalUrl);
+    if (merged.headless === undefined && typeof record.headless === "boolean") merged.headless = record.headless;
+    if (!merged.answersUsed && record.answersUsed && typeof record.answersUsed === "object" && !Array.isArray(record.answersUsed)) {
+      merged.answersUsed = Object.fromEntries(
+        Object.entries(record.answersUsed as Record<string, unknown>).filter(
+          (entry): entry is [string, string] => typeof entry[0] === "string" && typeof entry[1] === "string"
+        )
+      );
+    }
     if (!merged.blocker && record.blocker && typeof record.blocker === "object" && !Array.isArray(record.blocker)) {
       merged.blocker = record.blocker as StagehandDebugSummary["blocker"];
     }
@@ -176,10 +192,19 @@ export function extractStagehandDebug(events: AutomationEvent[]): StagehandDebug
     if (!merged.snapshot && record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)) {
       merged.snapshot = record.snapshot as StagehandDebugSummary["snapshot"];
     }
+    if (!merged.snapshots && Array.isArray(record.snapshots)) {
+      merged.snapshots = record.snapshots.filter(
+        (item): item is NonNullable<StagehandDebugSummary["snapshots"]>[number] =>
+          Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      );
+      if (!merged.snapshot && merged.snapshots.length > 0) {
+        merged.snapshot = merged.snapshots[merged.snapshots.length - 1];
+      }
+    }
     if (merged.raw === undefined && "raw" in record) merged.raw = record.raw;
   }
 
-  if (!merged.provider && !merged.model && !merged.finalUrl && !merged.actions && !merged.ai && merged.raw === undefined) {
+  if (!merged.provider && !merged.model && !merged.finalUrl && merged.headless === undefined && !merged.actions && !merged.ai && !merged.snapshots && merged.raw === undefined) {
     return null;
   }
 

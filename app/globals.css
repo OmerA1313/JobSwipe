@@ -437,6 +437,26 @@ button.text-button:hover:not(:disabled) {
   gap: 8px;
 }
 
+.tracking-snapshot-grid {
+  margin-top: 8px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.tracking-snapshot-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(133, 155, 183, 0.2);
+}
+
+.tracking-snapshot-link {
+  display: block;
+}
+
 .tracking-snapshot-image {
   max-width: 100%;
   border-radius: 12px;

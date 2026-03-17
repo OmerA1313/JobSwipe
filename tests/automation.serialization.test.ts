@@ -46,7 +46,13 @@ describe("automation debug serialization", () => {
           provider: "stagehand-local",
           model: "ollama/qwen2.5:7b",
           finalUrl: "https://jobs.example/apply",
-          snapshot: { label: "submit-blocked", dataUrl: "data:image/png;base64,abc" },
+          answersUsed: {
+            "How did you hear about us?": "LinkedIn"
+          },
+          snapshots: [
+            { label: "form-opened", dataUrl: "data:image/png;base64,aaa" },
+            { label: "submit-blocked", dataUrl: "data:image/png;base64,abc" }
+          ],
           raw: { source: "stagehand" }
         }
       })
@@ -60,6 +66,10 @@ describe("automation debug serialization", () => {
     expect(debug.browserbase?.replayUrl).toBe("https://browserbase.example/replay");
     expect(debug.stagehand?.provider).toBe("stagehand-local");
     expect(debug.stagehand?.snapshot?.label).toBe("submit-blocked");
+    expect(debug.stagehand?.snapshots?.map((snapshot) => snapshot.label)).toEqual(["form-opened", "submit-blocked"]);
+    expect(debug.stagehand?.answersUsed).toEqual({
+      "How did you hear about us?": "LinkedIn"
+    });
   });
 
   it("classifies manual attention from blocker text", () => {
