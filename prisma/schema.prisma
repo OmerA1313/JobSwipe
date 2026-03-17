@@ -50,7 +50,8 @@ model JobPosting {
   createdAt              DateTime        @default(now())
   decisions              JobDecision[]
   application            Application?
-  automationRuns AutomationRun[]
+  automationRuns         AutomationRun[]
+  automationSupportCases AutomationSupportCase[]
 }
 
 model JobDecision {
@@ -108,4 +109,28 @@ model AutomationEvent {
   run         AutomationRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId, createdAt])
+}
+
+model AutomationSupportCase {
+  id                    Int       @id @default(autoincrement())
+  cohort                String
+  slug                  String
+  siteType              String
+  name                  String
+  jobId                 Int
+  active                Boolean   @default(true)
+  expectedOutcome       String    @default("SUBMIT_CONFIRMED")
+  latestRunStatus       String?
+  latestOutcomeCategory String?
+  latestEvidenceSummary String?
+  lastRunAt             DateTime?
+  lastVerifiedAt        DateTime?
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  job                   JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([cohort, slug])
+  @@unique([cohort, jobId])
+  @@index([siteType, cohort, active])
 }

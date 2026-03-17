@@ -610,6 +610,11 @@ button.text-button:hover:not(:disabled) {
   border: 1px solid rgba(133, 155, 183, 0.16);
 }
 
+.pass-tag-muted {
+  background: rgba(120, 138, 160, 0.12);
+  color: #54687f;
+}
+
 .job-subline {
   color: #45617f;
   font-size: 0.95rem;

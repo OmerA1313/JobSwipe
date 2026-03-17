@@ -14,7 +14,7 @@
     "build": "npm run prisma:generate && node node_modules/next/dist/bin/next build",
     "start": "node node_modules/next/dist/bin/next start",
     "lint": "node node_modules/next/dist/bin/next lint",
-    "test:automation": "vitest run tests/automation.serialization.test.ts",
+    "test:automation": "vitest run tests",
     "prisma:generate": "node node_modules/prisma/build/index.js generate",
     "prisma:push": "node node_modules/prisma/build/index.js db push"
   },

@@ -8,14 +8,26 @@ import {
   serializeAutomationEvent,
   type ParsedAutomationEvent
 } from "@/lib/automation-debug";
+import {
+  detectAutomationSite,
+  getAutomationSiteSupport,
+  IMPLEMENTED_AUTOMATION_SITES,
+  isAutoApplyEnabledSite,
+  type AutomationSiteType
+} from "@/lib/automation-sites";
 import { dispatchAutomationRun } from "@/lib/automation-orchestrator";
 import { prisma } from "@/lib/prisma";
 
 export const AUTOMATION_ACTIVE_STATUSES = ["QUEUED", "RUNNING", "NEEDS_INPUT"] as const;
 export const AUTOMATION_TERMINAL_STATUSES = ["SUBMITTED", "FAILED"] as const;
 
-export type AutomationSiteType = "LEVER" | "GREENHOUSE" | "COMEET" | "LINKEDIN" | "UNSUPPORTED";
-export const IMPLEMENTED_AUTOMATION_SITES: AutomationSiteType[] = ["LEVER", "COMEET"];
+export type { AutomationSiteType } from "@/lib/automation-sites";
+export {
+  detectAutomationSite,
+  getAutomationSiteSupport,
+  IMPLEMENTED_AUTOMATION_SITES,
+  isAutoApplyEnabledSite
+} from "@/lib/automation-sites";
 
 type RunWithRelations = AutomationRun & {
   job: JobPosting;
@@ -24,17 +36,6 @@ type RunWithRelations = AutomationRun & {
 
 function getManualActionUrl(run: Pick<AutomationRun, "siteType"> & { job: Pick<JobPosting, "url"> }) {
   return run.job.url;
-}
-
-export function detectAutomationSite(job: Pick<JobPosting, "url" | "source">): AutomationSiteType {
-  const url = (job.url ?? "").toLowerCase();
-  const source = (job.source ?? "").toLowerCase();
-
-  if (url.includes("jobs.lever.co")) return "LEVER";
-  if (url.includes("comeet.com/jobs/")) return "COMEET";
-  if (url.includes("linkedin.com/jobs/view") || url.includes("linkedin.com/jobs/collections")) return "LINKEDIN";
-  if (url.includes("greenhouse") || url.includes("gh_jid=") || source === "greenhouse") return "GREENHOUSE";
-  return "UNSUPPORTED";
 }
 
 export function requiredAutomationProfileFields(profile: UserProfile) {
@@ -185,11 +186,12 @@ export async function enqueueAutomationRun(jobId: number) {
     };
   }
 
-  if (!IMPLEMENTED_AUTOMATION_SITES.includes(siteType)) {
+  if (!isAutoApplyEnabledSite(siteType)) {
+    const site = getAutomationSiteSupport(siteType);
     return {
       ok: false as const,
       status: 400,
-      message: `Automation for ${siteType.toLowerCase()} jobs is not implemented yet`
+      message: `Auto-apply is not enabled for ${site.label} jobs yet`
     };
   }
 

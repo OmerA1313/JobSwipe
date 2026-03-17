@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ensureBootstrap } from "@/lib/bootstrap";
-import { detectAutomationSite, IMPLEMENTED_AUTOMATION_SITES } from "@/lib/automation";
+import { detectAutomationSite, getAutomationSiteSupport, isAutoApplyEnabledSite } from "@/lib/automation-sites";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -17,6 +17,12 @@ export async function GET() {
         automationRuns: {
           orderBy: { createdAt: "desc" },
           take: 1
+        },
+        automationSupportCases: {
+          where: { active: true },
+          select: {
+            cohort: true
+          }
         }
       },
       orderBy: { createdAt: "desc" }
@@ -30,11 +36,12 @@ export async function GET() {
         const latestRun = job.automationRuns[0];
         if (latestRun && ["QUEUED", "RUNNING", "SUBMITTED"].includes(latestRun.status)) return false;
         const siteType = detectAutomationSite(job);
-        return IMPLEMENTED_AUTOMATION_SITES.includes(siteType);
+        return isAutoApplyEnabledSite(siteType);
       })
       .map((job) => {
         const latestRun = job.automationRuns[0];
         const siteType = detectAutomationSite(job);
+        const support = getAutomationSiteSupport(siteType);
         return {
           id: job.id,
           title: job.title,
@@ -43,6 +50,10 @@ export async function GET() {
           source: job.source,
           url: job.url,
           siteType,
+          supportStatus: support.supportStatus,
+          autoApplyEnabled: support.autoApplyEnabled,
+          supportLabel: support.label,
+          activeSupportCohorts: job.automationSupportCases.map((item) => item.cohort),
           latestRunStatus: latestRun?.status ?? null
         };
       })
@@ -50,6 +61,9 @@ export async function GET() {
         const leftIsrael = /israel/i.test(left.location) ? 1 : 0;
         const rightIsrael = /israel/i.test(right.location) ? 1 : 0;
         if (leftIsrael !== rightIsrael) return rightIsrael - leftIsrael;
+        const leftSupport = left.activeSupportCohorts.length > 0 ? 1 : 0;
+        const rightSupport = right.activeSupportCohorts.length > 0 ? 1 : 0;
+        if (leftSupport !== rightSupport) return rightSupport - leftSupport;
         if (left.siteType !== right.siteType) {
           if (left.siteType === "COMEET") return -1;
           if (right.siteType === "COMEET") return 1;

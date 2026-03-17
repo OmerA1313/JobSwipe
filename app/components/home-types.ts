@@ -37,6 +37,11 @@ export type FeedJob = {
   descriptionHighlights?: string[];
   requirementsSummary?: string[];
   url: string;
+  siteType?: string;
+  supportStatus?: "supported" | "partially_supported" | "unsupported";
+  autoApplyEnabled?: boolean;
+  supportLabel?: string;
+  activeSupportCohorts?: string[];
   score: number;
   whyMatched: string[];
   passSignals?: {
@@ -165,5 +170,9 @@ export type AutomationReadyJob = {
   source?: string;
   url: string;
   siteType: string;
+  supportStatus: "supported" | "partially_supported" | "unsupported";
+  autoApplyEnabled: boolean;
+  supportLabel: string;
+  activeSupportCohorts?: string[];
   latestRunStatus?: string | null;
 };

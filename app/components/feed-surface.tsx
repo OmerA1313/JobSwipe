@@ -8,6 +8,7 @@ export function FeedSurface({
   leavingSwipe,
   filteredFeedLength,
   sourceFilter,
+  supportedOnly,
   availableSources,
   visibleDescriptionBullets,
   visibleRequirementBullets,
@@ -26,6 +27,7 @@ export function FeedSurface({
   onRefreshJobs,
   onResetQueue,
   onSourceFilterChange,
+  onSupportedOnlyChange,
   onPointerDown,
   onPointerMove,
   onPointerEnd,
@@ -48,6 +50,7 @@ export function FeedSurface({
   } | null;
   filteredFeedLength: number;
   sourceFilter: string;
+  supportedOnly: boolean;
   availableSources: string[];
   visibleDescriptionBullets: string[];
   visibleRequirementBullets: string[];
@@ -66,6 +69,7 @@ export function FeedSurface({
   onRefreshJobs: () => void;
   onResetQueue: () => void;
   onSourceFilterChange: (nextSource: string) => void;
+  onSupportedOnlyChange: (nextValue: boolean) => void;
   onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerEnd: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -96,8 +100,17 @@ export function FeedSurface({
               ))}
             </select>
           </label>
+          <label className="feed-filter">
+            <span className="small">Scope</span>
+            <select value={supportedOnly ? "supported" : "all"} onChange={(event) => onSupportedOnlyChange(event.target.value === "supported")}>
+              <option value="supported">Supported ATS only</option>
+              <option value="all">All discovery</option>
+            </select>
+          </label>
         </div>
-        <span className="small">Use source to narrow the list when you want to focus on one provider.</span>
+        <span className="small">
+          Use source to narrow providers. Supported ATS keeps the queue on active auto-apply families while All discovery shows the broader market.
+        </span>
       </div>
 
       {topJob ? (
@@ -160,6 +173,11 @@ export function FeedSurface({
               <div className="swipe-meta"><span className="small">job 1 of {filteredFeedLength}</span><span className="small">score {topJob.score} • {topJob.source ?? "local"}</span></div>
               <div className="job-highlight-row"><span className="hero-stat">{topJob.source ?? "local"}</span><span className="hero-stat">{topJob.isRemote ? "Remote-friendly" : "On-site / hybrid"}</span></div>
               <div className="pass-tags">
+                <span className={`pass-tag ${topJob.autoApplyEnabled ? "" : "pass-tag-muted"}`}>
+                  {topJob.autoApplyEnabled ? `${topJob.supportLabel ?? topJob.siteType ?? "Supported"} auto-apply` : `${topJob.supportLabel ?? topJob.siteType ?? "Unsupported"} discovery only`}
+                </span>
+              </div>
+              <div className="pass-tags">
                 {topJob.passSignals?.role ? <span className="pass-tag">Role: {topJob.passSignals.role}</span> : null}
                 {topJob.passSignals?.seniority ? <span className="pass-tag">Level: {topJob.passSignals.seniority}</span> : null}
                 {topJob.passSignals?.location ? <span className="pass-tag">Location: {topJob.passSignals.location}</span> : null}
@@ -182,9 +200,20 @@ export function FeedSurface({
               <div className="swipe-actions">
                 <button className="danger" onClick={() => onSwipe("left")} disabled={isSubmittingSwipe}>Not a fit</button>
                 <button onClick={() => onSwipe("down")} disabled={isSubmittingSwipe}>Skip</button>
-                <button className="primary" onClick={() => onSwipe("right")} disabled={isSubmittingSwipe}>Apply</button>
+                <button
+                  className="primary"
+                  onClick={() => onSwipe("right")}
+                  disabled={isSubmittingSwipe || !topJob.autoApplyEnabled}
+                >
+                  {topJob.autoApplyEnabled ? "Apply" : "Auto-apply unavailable"}
+                </button>
               </div>
               <a href={topJob.url} target="_blank" rel="noreferrer" className="small">Open listing</a>
+              {!topJob.autoApplyEnabled ? (
+                <p className="small" style={{ marginTop: 10 }}>
+                  This job stays in discovery, but auto-apply is only active for supported ATS families right now.
+                </p>
+              ) : null}
               {missingFields.length > 0 ? (
                 <p className="small" style={{ color: "#b91c1c", marginTop: 10 }}>
                   Missing required profile fields: {missingFields.map((field) => missingFieldLabels[field] ?? field).join(", ")}
@@ -198,7 +227,11 @@ export function FeedSurface({
         <div className="card">
           <h2>Queue complete</h2>
           <p className="small">
-            {sourceFilter !== "all" ? `No ${sourceFilter} jobs are available right now. Try finding new jobs or switch the source filter.` : "No jobs are waiting right now. Try finding new jobs or updating your preferences."}
+            {sourceFilter !== "all"
+              ? `No ${sourceFilter} jobs are available right now. Try finding new jobs or switch the source filter.`
+              : supportedOnly
+              ? "No supported ATS jobs are waiting right now. Switch the scope to All discovery or refresh the feed."
+              : "No jobs are waiting right now. Try finding new jobs or updating your preferences."}
           </p>
         </div>
       )}

@@ -172,6 +172,7 @@ export default function HomePage() {
   const [desiredRoleDraft, setDesiredRoleDraft] = useState("");
   const [preferredLocationDraft, setPreferredLocationDraft] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [supportedOnly, setSupportedOnly] = useState(true);
   const [availableSources, setAvailableSources] = useState<string[]>([]);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [showFullRequirements, setShowFullRequirements] = useState(false);
@@ -405,10 +406,12 @@ export default function HomePage() {
     window.localStorage.setItem(DEV_SETTINGS_STORAGE_KEY, JSON.stringify(devSettings));
   }, [devSettings]);
 
-  const filteredFeed = useMemo(
-    () => (sourceFilter === "all" ? feed : feed.filter((job) => (job.source ?? "").trim().toLowerCase() === sourceFilter)),
-    [feed, sourceFilter]
-  );
+  const filteredFeed = useMemo(() => {
+    const sourceScoped =
+      sourceFilter === "all" ? feed : feed.filter((job) => (job.source ?? "").trim().toLowerCase() === sourceFilter);
+    if (!supportedOnly) return sourceScoped;
+    return sourceScoped.filter((job) => job.autoApplyEnabled);
+  }, [feed, sourceFilter, supportedOnly]);
   const automationPreviewJob = useMemo(
     () => automationReadyJobs.find((job) => job.id === automationPreviewJobId) ?? automationReadyJobs[0] ?? null,
     [automationPreviewJobId, automationReadyJobs]
@@ -667,6 +670,14 @@ export default function HomePage() {
   }
 
   async function submitApply(jobId: number, job: FeedJob, options?: { announceStart?: boolean }) {
+    if (!job.autoApplyEnabled) {
+      startTransition(() => {
+        setStatus(`${job.title} is still discovery-only. Switch the scope back to supported ATS jobs to auto-apply.`);
+        setMissingFields([]);
+      });
+      return false;
+    }
+
     if (options?.announceStart !== false) {
       startTransition(() => {
         setStatus("Starting your application...");
@@ -811,6 +822,11 @@ export default function HomePage() {
   async function triggerSwipe(direction: SwipeDirection) {
     if (!topJob || isSubmittingSwipe) return;
 
+    if (direction === "right" && !topJob.autoApplyEnabled) {
+      setStatus(`${topJob.title} is not on a supported auto-apply ATS yet.`);
+      return;
+    }
+
     const swipedJob = topJob;
     const currentJobId = swipedJob.id;
     const releaseX = dragStateRef.current.x;
@@ -933,6 +949,14 @@ export default function HomePage() {
     setStatus("Ready");
   }
 
+  function handleSupportedOnlyChange(nextValue: boolean) {
+    if (nextValue === supportedOnly) return;
+    setSupportedOnly(nextValue);
+    setLeavingSwipe(null);
+    resetDragVisuals();
+    setStatus(nextValue ? "Showing supported ATS jobs only" : "Showing the full discovery feed");
+  }
+
   async function submitRunAnswer(run: AutomationRunItem) {
     const answer = (runAnswerDrafts[run.id] ?? "").trim();
     if (!answer || answeringRunId === run.id) return;
@@ -1031,6 +1055,7 @@ export default function HomePage() {
           leavingSwipe={leavingSwipe}
           filteredFeedLength={filteredFeed.length}
           sourceFilter={sourceFilter}
+          supportedOnly={supportedOnly}
           availableSources={availableSources}
           visibleDescriptionBullets={visibleDescriptionBullets}
           visibleRequirementBullets={visibleRequirementBullets}
@@ -1049,6 +1074,7 @@ export default function HomePage() {
           onRefreshJobs={() => void refreshJobs()}
           onResetQueue={() => void resetQueue()}
           onSourceFilterChange={handleSourceFilterChange}
+          onSupportedOnlyChange={handleSupportedOnlyChange}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerEnd={handlePointerEnd}
@@ -1215,6 +1241,11 @@ export default function HomePage() {
                                 source: job.source,
                                 summary: "",
                                 url: job.url,
+                                siteType: job.siteType,
+                                supportStatus: job.supportStatus,
+                                autoApplyEnabled: job.autoApplyEnabled,
+                                supportLabel: job.supportLabel,
+                                activeSupportCohorts: job.activeSupportCohorts,
                                 score: 0,
                                 whyMatched: []
                               })
@@ -1271,6 +1302,11 @@ export default function HomePage() {
                           source: automationPreviewJob.source,
                           summary: "",
                           url: automationPreviewJob.url,
+                          siteType: automationPreviewJob.siteType,
+                          supportStatus: automationPreviewJob.supportStatus,
+                          autoApplyEnabled: automationPreviewJob.autoApplyEnabled,
+                          supportLabel: automationPreviewJob.supportLabel,
+                          activeSupportCohorts: automationPreviewJob.activeSupportCohorts,
                           score: 0,
                           whyMatched: []
                         })

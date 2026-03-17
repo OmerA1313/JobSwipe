@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ensureBootstrap } from "@/lib/bootstrap";
+import { detectAutomationSite, getAutomationSiteSupport } from "@/lib/automation-sites";
 import { rankJobsForFeed } from "@/lib/matching";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +23,12 @@ export async function GET(req: Request) {
           automationRuns: {
             orderBy: { createdAt: "desc" },
             take: 1
+          },
+          automationSupportCases: {
+            where: { active: true },
+            select: {
+              cohort: true
+            }
           }
         }
       })
@@ -57,8 +64,22 @@ export async function GET(req: Request) {
       ? rankedAll.filter((job) => (job.source ?? "").trim().toLowerCase() === selectedSource)
       : rankedAll;
 
+    const feedJobs = ranked.map((job) => {
+      const sourceJob = pending.find((item) => item.id === job.id);
+      const siteType = detectAutomationSite(sourceJob ?? job);
+      const support = getAutomationSiteSupport(siteType);
+      return {
+        ...job,
+        siteType,
+        supportStatus: support.supportStatus,
+        autoApplyEnabled: support.autoApplyEnabled,
+        supportLabel: support.label,
+        activeSupportCohorts: sourceJob?.automationSupportCases.map((item) => item.cohort) ?? []
+      };
+    });
+
     return NextResponse.json({
-      jobs: ranked,
+      jobs: feedJobs,
       availableSources,
       selectedSource: selectedSource || "all"
     });
