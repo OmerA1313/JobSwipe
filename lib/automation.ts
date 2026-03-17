@@ -2,9 +2,10 @@ import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "@p
 
 import {
   buildAutomationDebug,
+  deriveManualAttention,
+  extractNormalizedBlocker,
   parseAutomationAnswers,
   parseEventPayload,
-  requiresManualAttention,
   serializeAutomationEvent,
   type ParsedAutomationEvent
 } from "@/lib/automation-debug";
@@ -53,15 +54,18 @@ export function requiredAutomationProfileFields(profile: UserProfile) {
 
 export function serializeAutomationRun(run: RunWithRelations) {
   const latestEvent = run.events[0] ?? null;
+  const blocker = extractNormalizedBlocker(run.events);
   const answers = parseAutomationAnswers(run);
   return {
     id: run.id,
     jobId: run.jobId,
     siteType: run.siteType,
     status: run.status,
+    blockerCategory: blocker?.category ?? null,
+    blockerDetail: blocker?.detail ?? run.blockingQuestion ?? run.lastError ?? null,
     currentStep: run.currentStep,
     needsInput: run.needsInput,
-    requiresManualAttention: requiresManualAttention(run),
+    requiresManualAttention: deriveManualAttention(run, run.events),
     blockingQuestion: run.blockingQuestion,
     inputField: run.inputField,
     answers,

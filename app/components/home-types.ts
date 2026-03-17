@@ -69,6 +69,8 @@ export type AutomationRunItem = {
   jobId: number;
   siteType: string;
   status: string;
+  blockerCategory?: string | null;
+  blockerDetail?: string | null;
   currentStep?: string | null;
   needsInput: boolean;
   requiresManualAttention?: boolean;
@@ -106,6 +108,12 @@ export type AutomationRunItem = {
       model?: string;
       baseUrl?: string;
       finalUrl?: string;
+      blocker?: {
+        category?: string;
+        detail?: string;
+        manualAttention?: boolean;
+        disagreement?: boolean;
+      };
       actions?: unknown[];
       ai?: unknown[];
       snapshot?: {

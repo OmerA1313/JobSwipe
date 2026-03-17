@@ -34,6 +34,12 @@ export type StagehandDebugSummary = {
   model?: string;
   baseUrl?: string;
   finalUrl?: string;
+  blocker?: {
+    category?: string;
+    detail?: string;
+    manualAttention?: boolean;
+    disagreement?: boolean;
+  };
   actions?: unknown[];
   ai?: unknown[];
   snapshot?: {
@@ -162,6 +168,9 @@ export function extractStagehandDebug(events: AutomationEvent[]): StagehandDebug
     if (!merged.model && typeof record.model === "string") merged.model = record.model;
     if (!merged.baseUrl && typeof record.baseUrl === "string") merged.baseUrl = record.baseUrl;
     if (!merged.finalUrl) merged.finalUrl = normalizeUrl(record.finalUrl);
+    if (!merged.blocker && record.blocker && typeof record.blocker === "object" && !Array.isArray(record.blocker)) {
+      merged.blocker = record.blocker as StagehandDebugSummary["blocker"];
+    }
     if (!merged.actions && Array.isArray(record.actions)) merged.actions = record.actions;
     if (!merged.ai && Array.isArray(record.ai)) merged.ai = record.ai;
     if (!merged.snapshot && record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)) {
@@ -175,6 +184,20 @@ export function extractStagehandDebug(events: AutomationEvent[]): StagehandDebug
   }
 
   return merged;
+}
+
+export function extractNormalizedBlocker(events: AutomationEvent[]) {
+  const stagehand = extractStagehandDebug(events);
+  return stagehand?.blocker ?? null;
+}
+
+export function deriveManualAttention(
+  run: Pick<AutomationRun, "blockingQuestion" | "lastError" | "currentStep">,
+  events: AutomationEvent[]
+) {
+  const blocker = extractNormalizedBlocker(events);
+  if (blocker?.manualAttention) return true;
+  return requiresManualAttention(run);
 }
 
 export function buildAutomationDebug(events: AutomationEvent[]): AutomationDebugSummary {

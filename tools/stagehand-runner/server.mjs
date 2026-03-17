@@ -23,9 +23,11 @@ const MODEL_CONFIG = {
 };
 const AI_TIMEOUT_MS = Number(process.env.STAGEHAND_AI_TIMEOUT_MS || 20000);
 const SERVER_TIMEOUT_MS = Number(process.env.STAGEHAND_SERVER_TIMEOUT_MS || 180000);
+const STRICT_STATE_DISAGREEMENT = process.env.STAGEHAND_STRICT_STATE_DISAGREEMENT !== '0';
 const PROFILE_TEMP_PREFIX = 'stagehand-v3-profile-';
 const REPO_ROOT = path.dirname(fileURLToPath(new URL('../../package.json', import.meta.url)));
 const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
+const MANUAL_ATTENTION_CATEGORIES = new Set(['human_check', 'login_required', 'form_not_reached', 'unsupported_flow', 'state_disagreement']);
 
 function jsonResponse(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -365,6 +367,31 @@ function normalizeBlockingMessage(message) {
   return text;
 }
 
+function classifyBlockerCategory(detail, fallback = 'unsupported_flow') {
+  const text = normalizeWhitespace(detail).toLowerCase();
+  if (!text) return fallback;
+  if (/human check|captcha|verify you are human|robot|session verification failed/.test(text)) return 'human_check';
+  if (/sign in|log in|login|authentication|required to continue/.test(text)) return 'login_required';
+  if (/resume|cv|attachment|file upload/.test(text)) return 'resume_upload';
+  if (/validation|required field|required option|must be completed|invalid/.test(text)) return 'validation_error';
+  if (/could not find the application entry point|could not open the actual comeet application form|form is still not available|form not reached/.test(text)) {
+    return 'form_not_reached';
+  }
+  if (/submit|submission/.test(text) && /could not confirm|unconfirmed|not confirmed/.test(text)) return 'submit_unconfirmed';
+  return fallback;
+}
+
+function attachBlocker(debug, category, detail, options = {}) {
+  const blocker = {
+    category,
+    detail,
+    manualAttention: options.manualAttention ?? MANUAL_ATTENTION_CATEGORIES.has(category),
+    disagreement: Boolean(options.disagreement)
+  };
+  debug.blocker = blocker;
+  return blocker;
+}
+
 async function captureTerminalSnapshot(page, debug, label) {
   if (!page) return;
   try {
@@ -387,36 +414,42 @@ async function captureTerminalSnapshot(page, debug, label) {
   }
 }
 
-function createNeedsInput(message, inputField, debug, extra = {}) {
+function createNeedsInput(category, detail, inputField, debug, extra = {}) {
+  const blocker = attachBlocker(debug, category, detail, extra);
   return {
     status: 'NEEDS_INPUT',
-    currentStep: 'Waiting for manual input',
+    currentStep: blocker.manualAttention ? 'Manual attention required' : 'Waiting for manual input',
     needsInput: true,
-    blockingQuestion: message,
+    blockingQuestion: detail,
     inputField,
-    message,
+    message: detail,
     payload: {
       stagehand: debug,
+      blocker,
       ...extra
     }
   };
 }
 
-function createFailed(message, debug, extra = {}) {
+function createFailed(category, detail, debug, extra = {}) {
+  const blocker = attachBlocker(debug, category, detail, extra);
   return {
     status: 'FAILED',
     currentStep: 'Automation failed',
-    lastError: message,
-    message,
+    lastError: detail,
+    blockingQuestion: blocker.manualAttention ? detail : null,
+    message: detail,
     level: 'ERROR',
     payload: {
       stagehand: debug,
+      blocker,
       ...extra
     }
   };
 }
 
 function createSubmitted(message, debug, extra = {}) {
+  debug.blocker = null;
   return {
     status: 'SUBMITTED',
     currentStep: 'Application submitted',
@@ -440,6 +473,37 @@ async function safeExtract(stagehand, instruction, schema, page, debug, label) {
     debug.ai.push({ label, instruction, error: stringifyError(error) });
     return null;
   }
+}
+
+async function interpretBlockingQuestion(stagehand, page, question, debug) {
+  if (!question) return null;
+
+  return safeExtract(
+    stagehand,
+    [
+      `A required application question or field is still unresolved: "${question}".`,
+      'Classify it into one of: missing_answer, validation_error, login_required, resume_upload, human_check, unsupported_flow.',
+      'Return a short user-facing detail that makes the blocker clear without inventing facts.'
+    ].join(' '),
+    {
+      category: 'string',
+      detail: 'string',
+      reasoning: 'string'
+    },
+    page,
+    debug,
+    'blocking-question'
+  );
+}
+
+async function createStateDisagreementResult(page, debug, label, summary, extra = {}) {
+  debug.finalUrl = page.url();
+  await captureTerminalSnapshot(page, debug, label);
+  return createNeedsInput('state_disagreement', summary, 'manual_review', debug, {
+    disagreement: true,
+    manualAttention: true,
+    ...extra
+  });
 }
 
 async function clickBestApplyEntry(page, suggestedLabel, debug) {
@@ -506,6 +570,7 @@ async function runComeet(input) {
     provider: 'stagehand-local',
     model: `ollama/${STAGEHAND_MODEL}`,
     baseUrl: OLLAMA_BASE_URL,
+    blocker: null,
     actions: [],
     ai: [],
     finalUrl: job.url || '',
@@ -543,6 +608,7 @@ async function runComeet(input) {
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     debug.finalUrl = page.url();
 
+    // Stagehand owns page-state reasoning and entry-point understanding before deterministic form control starts.
     const entryState = await safeExtract(
       stagehand,
       [
@@ -563,6 +629,20 @@ async function runComeet(input) {
 
     let formScope = await getComeetFormScope(page).catch(() => page);
     const hasFormBeforeClick = await hasVisibleFormInputs(formScope);
+    if (
+      STRICT_STATE_DISAGREEMENT &&
+      typeof entryState?.hasVisibleForm === 'boolean' &&
+      entryState.hasVisibleForm !== hasFormBeforeClick
+    ) {
+      return createStateDisagreementResult(
+        page,
+        debug,
+        'entry-state-disagreement',
+        `AI judged the page as ${entryState.hasVisibleForm ? 'already on the form' : 'still on the listing'}, but deterministic checks saw ${hasFormBeforeClick ? 'visible form fields' : 'no visible form fields'}.`,
+        { entryState, deterministic: { hasFormBeforeClick } }
+      );
+    }
+
     if (!hasFormBeforeClick) {
       const clickResult = await clickBestApplyEntry(page, entryState?.bestApplyCtaText || '', debug);
       formScope = await getComeetFormScope(page).catch(() => page);
@@ -589,19 +669,45 @@ async function runComeet(input) {
         debug.raw.postClickState = postClickState;
         debug.finalUrl = page.url();
 
+        if (
+          STRICT_STATE_DISAGREEMENT &&
+          typeof postClickState?.hasVisibleForm === 'boolean' &&
+          postClickState.hasVisibleForm !== hasFormAfterClick
+        ) {
+          return createStateDisagreementResult(
+            page,
+            debug,
+            'post-click-state-disagreement',
+            `AI judged the page as ${postClickState.hasVisibleForm ? 'showing the application form' : 'still missing the form'}, but deterministic checks still saw no visible form fields after the entry click.`,
+            {
+              entryState,
+              postClickState,
+              deterministic: { hasFormAfterClick },
+              attemptedCtas: clickResult.tried
+            }
+          );
+        }
+
         if (!clickResult.clicked) {
+          const detail = postClickState?.blocker || 'Could not find the application entry point on this Comeet page.';
+          const category = classifyBlockerCategory(detail, 'form_not_reached');
+          debug.finalUrl = page.url();
           await captureTerminalSnapshot(page, debug, 'missing-apply-entry');
           return createNeedsInput(
-            postClickState?.blocker || 'Could not find the application entry point on this Comeet page.',
+            category,
+            detail,
             'manual_review',
             debug,
             { attemptedCtas: clickResult.tried }
           );
         }
 
+        const detail = postClickState?.blocker || 'Reached the job page but could not open the actual Comeet application form.';
+        const category = classifyBlockerCategory(detail, 'form_not_reached');
         await captureTerminalSnapshot(page, debug, 'form-not-opened');
         return createNeedsInput(
-          postClickState?.blocker || 'Reached the job page but could not open the actual Comeet application form.',
+          category,
+          detail,
           'manual_review',
           debug,
           { attemptedCtas: clickResult.tried }
@@ -638,9 +744,10 @@ async function runComeet(input) {
     if (!resumeFile?.filePath) {
       debug.finalUrl = page.url();
       await captureTerminalSnapshot(page, debug, 'missing-resume');
-      return createNeedsInput('A PDF resume is required before automation can continue.', 'resume_upload', debug);
+      return createNeedsInput('resume_upload', 'A PDF resume is required before automation can continue.', 'resume_upload', debug);
     }
 
+    // From here on, Playwright owns deterministic field fill, upload, and submit behavior.
     debug.actions.push({ type: 'upload', target: resumeFile.fileName });
     const fileUploaded =
       (await uploadFirstFile(formScope, resumeFile.filePath)) ||
@@ -655,15 +762,25 @@ async function runComeet(input) {
 
     const blockingQuestion = await findBlockingQuestion(formScope);
     if (blockingQuestion) {
+      const interpreted = await interpretBlockingQuestion(stagehand, formScope, blockingQuestion, debug);
+      const detail = firstNonEmpty(interpreted?.detail, blockingQuestion);
+      const category = classifyBlockerCategory(interpreted?.category || detail, 'missing_answer');
       debug.finalUrl = page.url();
       await captureTerminalSnapshot(page, debug, 'missing-required-answer');
-      return createNeedsInput(blockingQuestion, blockingQuestion, debug);
+      return createNeedsInput(category, detail, blockingQuestion, debug, {
+        interpretedQuestion: interpreted
+      });
     }
 
     if (!fileUploaded) {
       debug.finalUrl = page.url();
       await captureTerminalSnapshot(page, debug, 'resume-upload-blocked');
-      return createNeedsInput('The Comeet form requires a resume upload that could not be completed automatically.', 'resume_upload', debug);
+      return createNeedsInput(
+        'resume_upload',
+        'The Comeet form requires a resume upload that could not be completed automatically.',
+        'resume_upload',
+        debug
+      );
     }
 
     const submitButton = formScope
@@ -672,7 +789,13 @@ async function runComeet(input) {
     if ((await submitButton.count()) === 0) {
       debug.finalUrl = page.url();
       await captureTerminalSnapshot(page, debug, 'missing-submit-button');
-      return createNeedsInput('The application form is open, but no submit button was found.', 'manual_review', debug);
+      return createNeedsInput(
+        'unsupported_flow',
+        'The application form is open, but no submit button was found.',
+        'manual_review',
+        debug,
+        { manualAttention: true }
+      );
     }
 
     debug.actions.push({ type: 'click', target: 'submit' });
@@ -701,17 +824,38 @@ async function runComeet(input) {
     if (!submitted) {
       const stillBlocking = await findBlockingQuestion(formScope);
       if (stillBlocking) {
+        const interpreted = await interpretBlockingQuestion(stagehand, formScope, stillBlocking, debug);
+        const detail = firstNonEmpty(interpreted?.detail, stillBlocking);
+        const category = classifyBlockerCategory(interpreted?.category || detail, 'missing_answer');
         await captureTerminalSnapshot(page, debug, 'submit-blocked');
-        return createNeedsInput(stillBlocking, stillBlocking, debug, { diagnostics });
+        return createNeedsInput(category, detail, stillBlocking, debug, {
+          diagnostics,
+          interpretedQuestion: interpreted
+        });
       }
       if (diagnostics.errors.length > 0) {
         const rawValidationMessage = diagnostics.errors[0];
         const validationMessage = normalizeBlockingMessage(rawValidationMessage);
-        await captureTerminalSnapshot(page, debug, 'validation-error');
-        return createNeedsInput(validationMessage, validationMessage, debug, { diagnostics, rawValidationMessage });
+        const category = classifyBlockerCategory(validationMessage, 'validation_error');
+        await captureTerminalSnapshot(page, debug, category === 'human_check' ? 'human-check' : 'validation-error');
+        return createNeedsInput(
+          category,
+          validationMessage,
+          MANUAL_ATTENTION_CATEGORIES.has(category) ? 'manual_review' : validationMessage,
+          debug,
+          {
+          diagnostics,
+          rawValidationMessage
+          }
+        );
       }
       await captureTerminalSnapshot(page, debug, 'submission-unconfirmed');
-      return createFailed(`Could not confirm Comeet submission (${diagnostics.url || 'unknown state'})`, debug, { diagnostics });
+      return createFailed(
+        'submit_unconfirmed',
+        `Could not confirm Comeet submission (${diagnostics.url || 'unknown state'})`,
+        debug,
+        { diagnostics }
+      );
     }
 
     await captureTerminalSnapshot(page, debug, 'submitted');
@@ -735,15 +879,16 @@ async function runAutomation(input) {
   const effectiveSiteType = siteType || (/comeet\.com\/jobs\//i.test(jobUrl) ? 'COMEET' : 'UNSUPPORTED');
 
   if (effectiveSiteType !== 'COMEET') {
-    return createFailed(`${effectiveSiteType.toLowerCase()} automation is not implemented in the Stagehand runner yet`, {
+    return createFailed('unsupported_flow', `${effectiveSiteType.toLowerCase()} automation is not implemented in the Stagehand runner yet`, {
       provider: 'stagehand-local',
       model: `ollama/${STAGEHAND_MODEL}`,
       baseUrl: OLLAMA_BASE_URL,
+      blocker: null,
       actions: [],
       ai: [],
       finalUrl: jobUrl,
       raw: { siteType: effectiveSiteType }
-    });
+    }, { manualAttention: true });
   }
 
   return runComeet(input);

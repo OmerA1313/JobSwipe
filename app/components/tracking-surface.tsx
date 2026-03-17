@@ -60,8 +60,8 @@ export function TrackingSurface({
                 <td>
                   {run.requiresManualAttention ? (
                     <div className="tracking-run-stack">
-                      <strong>Manual attention</strong>
-                      <span>{run.blockingQuestion ?? "This application needs manual attention."}</span>
+                      <strong>Manual attention{run.blockerCategory ? ` · ${run.blockerCategory}` : ""}</strong>
+                      <span>{run.blockerDetail ?? run.blockingQuestion ?? "This application needs manual attention."}</span>
                       <div className="tracking-inline-actions">
                         <a href={run.manualActionUrl ?? run.job.url} target="_blank" rel="noreferrer">Open job page</a>
                         <button type="button" onClick={() => onPerformRunAction(run, "mark_manual_submitted")} disabled={actingRunId === run.id}>
@@ -74,8 +74,8 @@ export function TrackingSurface({
                     </div>
                   ) : run.blockingQuestion ? (
                     <div className="tracking-run-stack">
-                      <strong>Needs input</strong>
-                      <span>{run.blockingQuestion}</span>
+                      <strong>Needs input{run.blockerCategory ? ` · ${run.blockerCategory}` : ""}</strong>
+                      <span>{run.blockerDetail ?? run.blockingQuestion}</span>
                       <div className="tracking-inline-actions">
                         <input
                           value={runAnswerDrafts[run.id] ?? ""}
@@ -132,8 +132,10 @@ export function TrackingSurface({
                           </div>
                           <div className="tracking-summary-card">
                             <StatusChip status={detailRun.requiresManualAttention ? "Manual attention" : detailRun.status} />
+                            {detailRun.blockerCategory ? <span className="chip">Blocker: {detailRun.blockerCategory}</span> : null}
+                            {stagehand?.blocker?.disagreement ? <span className="chip">AI/state disagreement</span> : null}
                             <strong>{detailRun.currentStep ?? detailRun.latestEvent?.message ?? "Run details"}</strong>
-                            <p>{detailRun.blockingQuestion ?? detailRun.lastError ?? detailRun.latestEvent?.message ?? "No blocker recorded."}</p>
+                            <p>{detailRun.blockerDetail ?? detailRun.blockingQuestion ?? detailRun.lastError ?? detailRun.latestEvent?.message ?? "No blocker recorded."}</p>
                           </div>
                           {stagehand?.snapshot?.dataUrl ? (
                             <details open>

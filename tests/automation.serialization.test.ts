@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAutomationDebug,
+  deriveManualAttention,
+  extractNormalizedBlocker,
   parseAutomationAnswers,
   requiresManualAttention,
   type AutomationDebugSummary
@@ -93,5 +95,43 @@ describe("automation debug serialization", () => {
     });
 
     expect(parseAutomationAnswers({ answersJson: "{bad json" } as never)).toEqual({});
+  });
+
+  it("extracts normalized blocker categories from Stagehand payloads", () => {
+    const events = [
+      createEvent(1, "stagehand-blocker", {
+        stagehand: {
+          provider: "stagehand-local",
+          blocker: {
+            category: "state_disagreement",
+            detail: "AI and deterministic checks disagreed about whether the form was visible.",
+            manualAttention: true,
+            disagreement: true
+          },
+          snapshot: {
+            label: "entry-state-disagreement",
+            dataUrl: "data:image/jpeg;base64,abc"
+          }
+        }
+      })
+    ];
+
+    expect(extractNormalizedBlocker(events as never)).toEqual({
+      category: "state_disagreement",
+      detail: "AI and deterministic checks disagreed about whether the form was visible.",
+      manualAttention: true,
+      disagreement: true
+    });
+
+    expect(
+      deriveManualAttention(
+        {
+          blockingQuestion: "Form state mismatch",
+          lastError: null,
+          currentStep: "Manual attention required"
+        } as never,
+        events as never
+      )
+    ).toBe(true);
   });
 });
