@@ -100,6 +100,21 @@ type AutomationRunItem = {
       usage?: unknown;
       raw?: unknown;
     } | null;
+    stagehand?: {
+      provider?: string;
+      model?: string;
+      baseUrl?: string;
+      finalUrl?: string;
+      actions?: unknown[];
+      ai?: unknown[];
+      snapshot?: {
+        label?: string;
+        mimeType?: string;
+        dataUrl?: string;
+        error?: string;
+      };
+      raw?: unknown;
+    } | null;
   };
   latestEvent?: {
     id: number;
@@ -1637,6 +1652,7 @@ export default function HomePage() {
                           const detailRun = runDetailsById[run.id] ?? run;
                           const anchor = detailRun.debug?.anchor;
                           const browserbase = detailRun.debug?.browserbase;
+                          const stagehand = detailRun.debug?.stagehand;
                           return (
                             <div style={{ display: "grid", gap: 12 }}>
                               {loadingRunDetailsId === run.id ? <div className="small">Loading details...</div> : null}
@@ -1651,6 +1667,8 @@ export default function HomePage() {
                                 {browserbase?.sessionId ? (
                                   <span className="chip">Browserbase session: {browserbase.sessionId}</span>
                                 ) : null}
+                                {stagehand?.provider ? <span className="chip">Stagehand: {stagehand.provider}</span> : null}
+                                {stagehand?.model ? <span className="chip">Model: {stagehand.model}</span> : null}
                               </div>
                               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                                 {anchor?.liveViewUrl ? (
@@ -1671,6 +1689,11 @@ export default function HomePage() {
                                 {browserbase?.replayUrl ? (
                                   <a href={browserbase.replayUrl} target="_blank" rel="noreferrer">
                                     Open Browserbase replay
+                                  </a>
+                                ) : null}
+                                {stagehand?.finalUrl ? (
+                                  <a href={stagehand.finalUrl} target="_blank" rel="noreferrer">
+                                    Open final page
                                   </a>
                                 ) : null}
                                 <a href={detailRun.job.url} target="_blank" rel="noreferrer">
@@ -1725,6 +1748,45 @@ export default function HomePage() {
                                   <summary>Latest Browserbase payload</summary>
                                   <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
                                     {stringifyDebugValue(browserbase.raw)}
+                                  </pre>
+                                </details>
+                              ) : null}
+                              {stagehand?.actions?.length ? (
+                                <details>
+                                  <summary>Stagehand actions</summary>
+                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                    {stringifyDebugValue(stagehand.actions)}
+                                  </pre>
+                                </details>
+                              ) : null}
+                              {stagehand?.snapshot?.dataUrl ? (
+                                <details open>
+                                  <summary>Stagehand snapshot{stagehand.snapshot.label ? ` (${stagehand.snapshot.label})` : ""}</summary>
+                                  <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                                    <img
+                                      src={stagehand.snapshot.dataUrl}
+                                      alt={stagehand.snapshot.label || "Stagehand browser snapshot"}
+                                      style={{ maxWidth: "100%", borderRadius: 12, border: "1px solid rgba(15, 23, 42, 0.12)" }}
+                                    />
+                                  </div>
+                                </details>
+                              ) : null}
+                              {stagehand?.snapshot?.error ? (
+                                <div className="small">Snapshot error: {stagehand.snapshot.error}</div>
+                              ) : null}
+                              {stagehand?.ai?.length ? (
+                                <details>
+                                  <summary>Stagehand AI notes</summary>
+                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                    {stringifyDebugValue(stagehand.ai)}
+                                  </pre>
+                                </details>
+                              ) : null}
+                              {stagehand?.raw !== undefined ? (
+                                <details>
+                                  <summary>Latest Stagehand payload</summary>
+                                  <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>
+                                    {stringifyDebugValue(stagehand.raw)}
                                   </pre>
                                 </details>
                               ) : null}

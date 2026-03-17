@@ -1,0 +1,256 @@
+[
+  {
+    "name": "Job Apply Stagehand Orchestrator",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "job-apply-agent",
+          "options": {}
+        },
+        "id": "76f2cd97-b63f-4b9d-bf73-aef59fd08c37",
+        "name": "Webhook Trigger",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2,
+        "position": [0, 0],
+        "webhookId": "6cd679f7-6045-493c-9ca2-726ba392b3ec"
+      },
+      {
+        "parameters": {
+          "jsCode": "const incoming = $input.first().json;\nconst trigger = incoming.body ?? incoming;\nconst headers = incoming.headers ?? {};\nconst automationSecret = headers['x-automation-secret'] || headers['X-Automation-Secret'] || '';\n\nconst contextUrl = trigger.app?.contextUrl ?? '';\nconst callbackUrl = trigger.app?.callbackUrl ?? '';\nconst jobUrl = trigger.job?.url ?? '';\n\nif (!/^https?:\\/\\//.test(contextUrl)) {\n  throw new Error('Invalid context URL in webhook payload');\n}\nif (!/^https?:\\/\\//.test(callbackUrl)) {\n  throw new Error('Invalid callback URL in webhook payload');\n}\nif (!/^https?:\\/\\//.test(jobUrl)) {\n  throw new Error('Invalid job URL in webhook payload');\n}\nif (!automationSecret) {\n  throw new Error('Missing automation secret header on webhook request');\n}\n\nreturn [{\n  json: {\n    reason: trigger.reason ?? 'queued',\n    run: trigger.run ?? {},\n    job: trigger.job ?? {},\n    profile: trigger.profile ?? {},\n    app: trigger.app ?? {},\n    contextUrl,\n    callbackUrl,\n    jobUrl,\n    automationSecret\n  }\n}];"
+        },
+        "id": "7f5a38f5-0e90-4a28-bbed-55b271752c4b",
+        "name": "Prepare Dispatch Input",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [240, 0]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "={{ $(\"Prepare Dispatch Input\").item.json.contextUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Dispatch Input\").item.json.automationSecret }}"
+              },
+              {
+                "name": "accept",
+                "value": "application/json"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "61e7a17e-715d-468a-bb65-b22eb482902d",
+        "name": "Fetch Run Context",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [480, 0]
+      },
+      {
+        "parameters": {
+          "jsCode": "const dispatch = $('Prepare Dispatch Input').item.json || {};\nconst context = $input.first().json || {};\nconst run = context.run || dispatch.run || {};\nconst job = run.job || dispatch.job || {};\nconst profile = context.profile || dispatch.profile || {};\n\nreturn [{\n  json: {\n    callbackUrl: dispatch.callbackUrl,\n    automationSecret: dispatch.automationSecret,\n    runnerInput: {\n      appBaseUrl: context.appBaseUrl || dispatch.app?.baseUrl || '',\n      run: { ...run, job },\n      profile\n    }\n  }\n}];"
+        },
+        "id": "d4dfd3f2-26b5-4a6e-b69e-3f00c0407ee1",
+        "name": "Prepare Stagehand Request",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [720, 0]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Stagehand Request\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Stagehand Request\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={\"status\":\"RUNNING\",\"currentStep\":\"Stagehand runner started\",\"message\":\"Stagehand started the local browser automation.\"}",
+          "options": {}
+        },
+        "id": "4644899b-9355-4352-9f1f-2c500600f37d",
+        "name": "Report Running",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [960, 0]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "http://host.docker.internal:8787/run",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ $(\"Prepare Stagehand Request\").item.json.runnerInput }}",
+          "options": {
+            "timeout": 180000
+          }
+        },
+        "id": "1b872104-2461-4493-8c29-212f37b4229c",
+        "name": "Run Stagehand",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [1200, 0],
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const raw = $input.first().json || {};\nconst validStatuses = new Set(['SUBMITTED', 'NEEDS_INPUT', 'FAILED']);\nconst status = validStatuses.has(raw.status) ? raw.status : 'FAILED';\nconst message = raw.message || (status === 'SUBMITTED' ? 'Application submitted successfully.' : status === 'NEEDS_INPUT' ? 'Automation requires manual input.' : 'Stagehand runner failed.');\nreturn [{\n  json: {\n    status,\n    currentStep: raw.currentStep || (status === 'SUBMITTED' ? 'Application submitted' : status === 'NEEDS_INPUT' ? 'Waiting for manual input' : 'Automation failed'),\n    needsInput: raw.needsInput ?? (status === 'NEEDS_INPUT'),\n    blockingQuestion: raw.blockingQuestion ?? null,\n    inputField: raw.inputField ?? null,\n    lastError: raw.lastError ?? (status === 'FAILED' ? message : null),\n    message,\n    level: raw.level || (status === 'FAILED' ? 'ERROR' : status === 'NEEDS_INPUT' ? 'WARN' : 'INFO'),\n    payload: raw.payload ?? null\n  }\n}];"
+        },
+        "id": "ef56c8f4-d76e-48b7-9e66-071c3c35a4c1",
+        "name": "Normalize Result",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [1440, 0]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "={{ $(\"Prepare Stagehand Request\").item.json.callbackUrl }}",
+          "authentication": "none",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "content-type",
+                "value": "application/json"
+              },
+              {
+                "name": "x-automation-secret",
+                "value": "={{ $(\"Prepare Stagehand Request\").item.json.automationSecret }}"
+              }
+            ]
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ $(\"Normalize Result\").item.json }}",
+          "options": {}
+        },
+        "id": "49a7c1b9-b067-49e3-b24b-50887b21453f",
+        "name": "Report Final Status",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [1680, 0]
+      }
+    ],
+    "connections": {
+      "Webhook Trigger": {
+        "main": [
+          [
+            {
+              "node": "Prepare Dispatch Input",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Dispatch Input": {
+        "main": [
+          [
+            {
+              "node": "Fetch Run Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Run Context": {
+        "main": [
+          [
+            {
+              "node": "Prepare Stagehand Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare Stagehand Request": {
+        "main": [
+          [
+            {
+              "node": "Report Running",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Report Running": {
+        "main": [
+          [
+            {
+              "node": "Run Stagehand",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Run Stagehand": {
+        "main": [
+          [
+            {
+              "node": "Normalize Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize Result": {
+        "main": [
+          [
+            {
+              "node": "Report Final Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "pinData": {},
+    "active": false,
+    "settings": {
+      "executionOrder": "v1"
+    },
+    "versionId": "job-apply-stagehand-orchestrator-version",
+    "meta": {},
+    "tags": []
+  }
+]

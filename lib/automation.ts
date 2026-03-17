@@ -42,6 +42,22 @@ type BrowserbaseDebugSummary = {
   raw?: unknown;
 };
 
+type StagehandDebugSummary = {
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  finalUrl?: string;
+  actions?: unknown[];
+  ai?: unknown[];
+  snapshot?: {
+    label?: string;
+    mimeType?: string;
+    dataUrl?: string;
+    error?: string;
+  };
+  raw?: unknown;
+};
+
 function parseEventPayload(payload: string | null) {
   if (!payload) return null;
   try {
@@ -104,6 +120,35 @@ function extractBrowserbaseDebug(events: AutomationEvent[]): BrowserbaseDebugSum
   }
 
   if (!merged.sessionId && !merged.sessionUrl && !merged.replayUrl && !merged.taskStatus && merged.completed === undefined) {
+    return null;
+  }
+
+  return merged;
+}
+
+function extractStagehandDebug(events: AutomationEvent[]): StagehandDebugSummary | null {
+  const merged: StagehandDebugSummary = {};
+
+  for (const event of events) {
+    const payload = parseEventPayload(event.payload);
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
+    const stagehand = "stagehand" in payload ? (payload as { stagehand?: unknown }).stagehand : null;
+    if (!stagehand || typeof stagehand !== "object" || Array.isArray(stagehand)) continue;
+
+    const record = stagehand as Record<string, unknown>;
+    if (!merged.provider && typeof record.provider === "string") merged.provider = record.provider;
+    if (!merged.model && typeof record.model === "string") merged.model = record.model;
+    if (!merged.baseUrl && typeof record.baseUrl === "string") merged.baseUrl = record.baseUrl;
+    if (!merged.finalUrl) merged.finalUrl = normalizeUrl(record.finalUrl);
+    if (!merged.actions && Array.isArray(record.actions)) merged.actions = record.actions;
+    if (!merged.ai && Array.isArray(record.ai)) merged.ai = record.ai;
+    if (!merged.snapshot && record.snapshot && typeof record.snapshot === "object" && !Array.isArray(record.snapshot)) {
+      merged.snapshot = record.snapshot as StagehandDebugSummary["snapshot"];
+    }
+    if (merged.raw === undefined && "raw" in record) merged.raw = record.raw;
+  }
+
+  if (!merged.provider && !merged.model && !merged.finalUrl && !merged.actions && !merged.ai && merged.raw === undefined) {
     return null;
   }
 
@@ -180,7 +225,8 @@ export function serializeAutomationRun(run: RunWithRelations) {
     updatedAt: run.updatedAt,
     debug: {
       anchor: extractAnchorDebug(run.events),
-      browserbase: extractBrowserbaseDebug(run.events)
+      browserbase: extractBrowserbaseDebug(run.events),
+      stagehand: extractStagehandDebug(run.events)
     },
     latestEvent: latestEvent
       ? {
