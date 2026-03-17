@@ -23,6 +23,9 @@ const MODEL_CONFIG = {
 };
 const AI_TIMEOUT_MS = Number(process.env.STAGEHAND_AI_TIMEOUT_MS || 20000);
 const SERVER_TIMEOUT_MS = Number(process.env.STAGEHAND_SERVER_TIMEOUT_MS || 180000);
+const PROFILE_TEMP_PREFIX = 'stagehand-v3-profile-';
+const REPO_ROOT = path.dirname(fileURLToPath(new URL('../../package.json', import.meta.url)));
+const RUNNER_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 function jsonResponse(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
@@ -93,6 +96,21 @@ async function writeResumeTempFile(profile) {
   const filePath = path.join(tempDir, fileName);
   await fs.writeFile(filePath, Buffer.from(resume.base64, 'base64'));
   return { tempDir, filePath, fileName };
+}
+
+async function createBrowserProfileDir() {
+  return fs.mkdtemp(path.join(os.tmpdir(), PROFILE_TEMP_PREFIX));
+}
+
+async function cleanupRepoProfileArtifacts() {
+  for (const baseDir of [REPO_ROOT, RUNNER_DIR]) {
+    const entries = await fs.readdir(baseDir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!entry.name.startsWith('\\\\wsl.localhost')) continue;
+      await fs.rm(path.join(baseDir, entry.name), { recursive: true, force: true }).catch(() => {});
+    }
+  }
 }
 
 async function fillFirstVisible(pageOrFrame, selectors, value) {
@@ -498,8 +516,11 @@ async function runComeet(input) {
   let browser;
   let page;
   let tempDir = null;
+  let profileDir = null;
 
   try {
+    await cleanupRepoProfileArtifacts();
+    profileDir = await createBrowserProfileDir();
     stagehand = new Stagehand({
       env: 'LOCAL',
       model: MODEL_CONFIG,
@@ -507,7 +528,9 @@ async function runComeet(input) {
       verbose: 0,
       localBrowserLaunchOptions: {
         headless: PLAYWRIGHT_HEADLESS,
-        executablePath: PLAYWRIGHT_EXECUTABLE_PATH
+        executablePath: PLAYWRIGHT_EXECUTABLE_PATH,
+        userDataDir: profileDir,
+        preserveUserDataDir: false
       }
     });
 
@@ -699,6 +722,10 @@ async function runComeet(input) {
     if (tempDir) {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
+    if (profileDir) {
+      await fs.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+    }
+    await cleanupRepoProfileArtifacts();
   }
 }
 
