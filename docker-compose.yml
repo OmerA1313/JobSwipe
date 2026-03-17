@@ -1,0 +1,93 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["bash", "docker/app-entrypoint.sh"]
+    ports:
+      - "${APP_HOST_PORT:-3001}:3000"
+    environment:
+      DATABASE_URL: file:/app/data/dev.db
+      NEXT_PUBLIC_DEV_TOOLS: ${NEXT_PUBLIC_DEV_TOOLS:-0}
+      ADZUNA_APP_ID: ${ADZUNA_APP_ID:-}
+      ADZUNA_APP_KEY: ${ADZUNA_APP_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      JOB_SUMMARY_PROVIDER: disabled
+      JOB_SUMMARY_LLM_MODEL: ${JOB_SUMMARY_LLM_MODEL:-gpt-4o-mini}
+      JOB_SUMMARY_LLM_MAX_JOBS: ${JOB_SUMMARY_LLM_MAX_JOBS:-40}
+      LINKEDIN_ENABLED: ${LINKEDIN_ENABLED:-1}
+      LINKEDIN_PAGE_SIZE: ${LINKEDIN_PAGE_SIZE:-25}
+      LINKEDIN_MAX_PAGES: ${LINKEDIN_MAX_PAGES:-4}
+      LINKEDIN_MAX_ROLE_QUERIES: ${LINKEDIN_MAX_ROLE_QUERIES:-3}
+      LINKEDIN_MAX_LOCATION_QUERIES: ${LINKEDIN_MAX_LOCATION_QUERIES:-2}
+      GLASSDOOR_ENABLED: ${GLASSDOOR_ENABLED:-0}
+      GREENHOUSE_BOARDS: ${GREENHOUSE_BOARDS:-sentinellabs,datadog,okta,taboola,redis,riskified}
+      LEVER_SITES: ${LEVER_SITES:-sentinelone,etoro,redis,superplay,appcard,meld,twingate,fairmatic}
+      AUTOMATION_ORCHESTRATOR: n8n
+      APP_BASE_URL: http://app:3000
+      AUTOMATION_SHARED_SECRET: ${AUTOMATION_SHARED_SECRET:-change-me}
+      N8N_AUTOMATION_WEBHOOK_URL: http://n8n:5678/webhook/job-apply-agent
+      STAGEHAND_RUNNER_BASE_URL: http://stagehand:8787
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      STAGEHAND_HEADLESS: 1
+    volumes:
+      - app_data:/app/data
+  stagehand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "tools/stagehand-runner/server.mjs"]
+    ports:
+      - "${STAGEHAND_HOST_PORT:-8788}:8787"
+    environment:
+      STAGEHAND_RUNNER_HOST: 0.0.0.0
+      STAGEHAND_HEADLESS: 1
+      OLLAMA_BASE_URL: http://ollama:11434
+      STAGEHAND_OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    depends_on:
+      - ollama
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "${OLLAMA_HOST_PORT:-11435}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  ollama-init:
+    image: ollama/ollama:latest
+    entrypoint: ["/bin/sh", "/bootstrap/ollama-init.sh"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    volumes:
+      - ./docker/ollama-init.sh:/bootstrap/ollama-init.sh:ro
+    depends_on:
+      - ollama
+    restart: "no"
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - "${N8N_HOST_PORT:-5679}:5678"
+    environment:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_SECURE_COOKIE: "false"
+      GENERIC_TIMEZONE: Asia/Jerusalem
+      AUTOMATION_SHARED_SECRET: ${AUTOMATION_SHARED_SECRET:-change-me}
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n:/workflows:ro
+    depends_on:
+      - app
+      - stagehand
+
+volumes:
+  app_data:
+  ollama_data:
+  n8n_data:

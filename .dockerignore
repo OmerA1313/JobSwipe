@@ -1,0 +1,11 @@
+.git
+.gitignore
+.env
+.next
+.planning
+.runtime
+node_modules
+tools/stagehand-runner/node_modules
+prisma/dev.db
+tsconfig.tsbuildinfo
+npm-debug.log*

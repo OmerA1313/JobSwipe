@@ -9,10 +9,10 @@ import { chromium } from '../../node_modules/playwright/index.mjs';
 
 const PORT = Number(process.env.STAGEHAND_RUNNER_PORT || 8787);
 const HOST = process.env.STAGEHAND_RUNNER_HOST || '127.0.0.1';
-const PLAYWRIGHT_EXECUTABLE_PATH =
-  process.env.STAGEHAND_PLAYWRIGHT_EXECUTABLE_PATH ||
-  process.env.PLAYWRIGHT_EXECUTABLE_PATH ||
-  '/home/oatar/.cache/ms-playwright/chromium-1208/chrome-linux64/chrome';
+const PLAYWRIGHT_EXECUTABLE_PATH = firstNonEmpty(
+  process.env.STAGEHAND_PLAYWRIGHT_EXECUTABLE_PATH,
+  process.env.PLAYWRIGHT_EXECUTABLE_PATH
+);
 const PLAYWRIGHT_HEADLESS = process.env.STAGEHAND_HEADLESS !== '0';
 const OLLAMA_BASE_URL = process.env.STAGEHAND_OLLAMA_BASE_URL || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
 const RAW_STAGEHAND_MODEL = process.env.STAGEHAND_OLLAMA_MODEL || process.env.OLLAMA_MODEL || 'qwen2.5:7b';
@@ -1029,19 +1029,23 @@ async function runComeet(input) {
     });
     await cleanupRepoProfileArtifacts();
     profileDir = await createBrowserProfileDir();
+    const localBrowserLaunchOptions = {
+      headless: PLAYWRIGHT_HEADLESS,
+      slowMo: PLAYWRIGHT_SLOW_MO_MS,
+      userDataDir: profileDir,
+      preserveUserDataDir: false,
+      args: ['--new-window', '--start-maximized']
+    };
+    if (PLAYWRIGHT_EXECUTABLE_PATH) {
+      localBrowserLaunchOptions.executablePath = PLAYWRIGHT_EXECUTABLE_PATH;
+    }
+
     stagehand = new Stagehand({
       env: 'LOCAL',
       model: MODEL_CONFIG,
       disableAPI: true,
       verbose: 0,
-      localBrowserLaunchOptions: {
-        headless: PLAYWRIGHT_HEADLESS,
-        slowMo: PLAYWRIGHT_SLOW_MO_MS,
-        executablePath: PLAYWRIGHT_EXECUTABLE_PATH,
-        userDataDir: profileDir,
-        preserveUserDataDir: false,
-        args: ['--new-window', '--start-maximized']
-      }
+      localBrowserLaunchOptions
     });
 
     await stagehand.init();

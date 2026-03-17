@@ -96,7 +96,7 @@
       {
         "parameters": {
           "method": "POST",
-          "url": "http://host.docker.internal:8787/run",
+          "url": "http://stagehand:8787/run",
           "authentication": "none",
           "sendHeaders": true,
           "specifyHeaders": "keypair",
