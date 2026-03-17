@@ -41,7 +41,7 @@ export type StagehandDebugSummary = {
     detail?: string;
     manualAttention?: boolean;
     disagreement?: boolean;
-  };
+  } | null;
   actions?: unknown[];
   ai?: unknown[];
   snapshot?: {
@@ -184,8 +184,11 @@ export function extractStagehandDebug(events: AutomationEvent[]): StagehandDebug
         )
       );
     }
-    if (!merged.blocker && record.blocker && typeof record.blocker === "object" && !Array.isArray(record.blocker)) {
-      merged.blocker = record.blocker as StagehandDebugSummary["blocker"];
+    if (merged.blocker === undefined && "blocker" in record) {
+      merged.blocker =
+        record.blocker && typeof record.blocker === "object" && !Array.isArray(record.blocker)
+          ? (record.blocker as Exclude<StagehandDebugSummary["blocker"], null | undefined>)
+          : null;
     }
     if (!merged.actions && Array.isArray(record.actions)) merged.actions = record.actions;
     if (!merged.ai && Array.isArray(record.ai)) merged.ai = record.ai;

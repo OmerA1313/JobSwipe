@@ -402,6 +402,7 @@ button.text-button:hover:not(:disabled) {
 .tracking-events-list {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .tracking-inline-actions,
@@ -410,6 +411,18 @@ button.text-button:hover:not(:disabled) {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
+}
+
+.tracking-link-row a,
+.tracking-inline-actions a,
+.tracking-inline-actions button,
+.tracking-chip-row .chip {
+  max-width: 100%;
+}
+
+.tracking-link-row a {
+  overflow-wrap: anywhere;
 }
 
 .tracking-summary-card {
@@ -419,6 +432,8 @@ button.text-button:hover:not(:disabled) {
   border: 1px solid rgba(133, 155, 183, 0.22);
   display: grid;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .tracking-pre {
@@ -429,12 +444,19 @@ button.text-button:hover:not(:disabled) {
   background: rgba(16, 32, 51, 0.04);
   border: 1px solid rgba(133, 155, 183, 0.18);
   overflow-x: auto;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tracking-snapshot-panel {
   margin-top: 8px;
   display: grid;
   gap: 8px;
+  width: 100%;
+  max-width: min(100%, 720px);
+  overflow: hidden;
+  min-width: 0;
 }
 
 .tracking-snapshot-grid {
@@ -451,16 +473,25 @@ button.text-button:hover:not(:disabled) {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.86);
   border: 1px solid rgba(133, 155, 183, 0.2);
+  min-width: 0;
 }
 
 .tracking-snapshot-link {
   display: block;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
 }
 
 .tracking-snapshot-image {
+  display: block;
+  width: 100%;
+  height: auto;
   max-width: 100%;
   border-radius: 12px;
   border: 1px solid rgba(15, 23, 42, 0.12);
+  object-fit: contain;
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .swipe-board {
@@ -790,12 +821,18 @@ button.text-button:hover:not(:disabled) {
   overflow: hidden;
 }
 
+.tracking-surface .table {
+  table-layout: fixed;
+}
+
 .table th,
 .table td {
   border-bottom: 1px solid var(--line);
   padding: 8px;
   text-align: left;
   font-size: 0.9rem;
+  vertical-align: top;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 760px) {

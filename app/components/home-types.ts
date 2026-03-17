@@ -54,6 +54,7 @@ export type FeedJob = {
 
 export type ApplicationItem = {
   id: number;
+  jobId: number;
   status: string;
   createdAt: string;
   hasResumeFile?: boolean;

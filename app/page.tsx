@@ -31,7 +31,7 @@ type ApiResult<T> =
 const SWIPE_X_THRESHOLD = 110;
 const SWIPE_Y_THRESHOLD = 130;
 const SWIPE_ANIMATION_MS = 180;
-const AUTO_RESET_TEST_QUEUE = true;
+const AUTO_RESET_TEST_QUEUE = false;
 const API_TIMEOUT_MS = 45000;
 const API_RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 const missingFieldLabels: Record<string, string> = {
@@ -71,13 +71,48 @@ function waitForNextPaint(frames = 1) {
 }
 
 function stringifyDebugValue(value: unknown) {
+  const seen = new WeakSet<object>();
+  const MAX_STRING_LENGTH = 480;
+  const sanitize = (input: unknown): unknown => {
+    if (typeof input === "string") {
+      if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(input)) {
+        return `[snapshot omitted: ${input.length} chars]`;
+      }
+      if (input.length > MAX_STRING_LENGTH) {
+        return `${input.slice(0, MAX_STRING_LENGTH)} … [truncated ${input.length - MAX_STRING_LENGTH} chars]`;
+      }
+      return input;
+    }
+
+    if (!input || typeof input !== "object") return input;
+    if (seen.has(input as object)) return "[circular]";
+    seen.add(input as object);
+
+    if (Array.isArray(input)) {
+      return input.map((item) => sanitize(item));
+    }
+
+    return Object.fromEntries(
+      Object.entries(input as Record<string, unknown>).map(([key, item]) => [key, sanitize(item)])
+    );
+  };
+
   if (value === undefined || value === null) return "";
   if (typeof value === "string") return value;
   try {
-    return JSON.stringify(value, null, 2);
+    return JSON.stringify(sanitize(value), null, 2);
   } catch {
     return String(value);
   }
+}
+
+function shouldHideJobFromFeed(
+  jobId: number,
+  applications: Array<Pick<ApplicationItem, "jobId">>,
+  runs: Array<Pick<AutomationRunItem, "jobId" | "status">>
+) {
+  if (applications.some((application) => application.jobId === jobId)) return true;
+  return runs.some((run) => run.jobId === jobId && ["QUEUED", "RUNNING", "NEEDS_INPUT", "SUBMITTED"].includes(run.status));
 }
 
 async function fetchJsonWithRetry<T>(url: string, init?: RequestInit, retries = 2): Promise<ApiResult<T>> {
@@ -217,6 +252,7 @@ export default function HomePage() {
     }
 
     setAutomationRuns(automationRunsResult.data.runs);
+    setFeed((prev) => prev.filter((job) => !shouldHideJobFromFeed(job.id, applications, automationRunsResult.data.runs)));
     setRunDetailsById((prev) => {
       const next = { ...prev };
       for (const run of automationRunsResult.data.runs) {
@@ -252,6 +288,9 @@ export default function HomePage() {
     setPendingResumeUpload(null);
     setApplications(applicationsResult.data.applications);
     setAutomationRuns(automationRunsResult.data.runs);
+    setFeed((prev) =>
+      prev.filter((job) => !shouldHideJobFromFeed(job.id, applicationsResult.data.applications, automationRunsResult.data.runs))
+    );
     setRunDetailsById((prev) => {
       const next = { ...prev };
       for (const run of automationRunsResult.data.runs) {
@@ -301,6 +340,7 @@ export default function HomePage() {
 
   function upsertAutomationRun(run: AutomationRunItem) {
     setAutomationRuns((prev) => [run, ...prev.filter((item) => item.id !== run.id)]);
+    setFeed((prev) => prev.filter((job) => job.id !== run.jobId || !["QUEUED", "RUNNING", "NEEDS_INPUT", "SUBMITTED"].includes(run.status)));
     setRunDetailsById((prev) => {
       if (!prev[run.id]) return prev;
       return {

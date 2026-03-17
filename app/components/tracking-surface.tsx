@@ -215,25 +215,25 @@ export function TrackingSurface({
                             </div>
                           ) : null}
                           {savedAnswers ? (
-                            <details open>
+                            <details>
                               <summary>Answers saved on this run</summary>
                               <pre className="tracking-pre">{stringifyDebugValue(savedAnswers)}</pre>
                             </details>
                           ) : null}
                           {answerMemory ? (
-                            <details open>
+                            <details>
                               <summary>Merged answer memory available to the worker</summary>
                               <pre className="tracking-pre">{stringifyDebugValue(answerMemory)}</pre>
                             </details>
                           ) : null}
                           {stagehand?.answersUsed && Object.keys(stagehand.answersUsed).length > 0 ? (
-                            <details open>
+                            <details>
                               <summary>Answers the worker attempted to reuse</summary>
                               <pre className="tracking-pre">{stringifyDebugValue(stagehand.answersUsed)}</pre>
                             </details>
                           ) : null}
                           {stagehandSnapshots.length ? (
-                            <details open>
+                            <details>
                               <summary>Stagehand snapshot timeline</summary>
                               <div className="tracking-snapshot-grid">
                                 {stagehandSnapshots.map((snapshot, index) => (
@@ -262,7 +262,7 @@ export function TrackingSurface({
                             </details>
                           ) : null}
                           {stagehand?.actions?.length ? (
-                            <details open>
+                            <details>
                               <summary>Action trace</summary>
                               <pre className="tracking-pre">{stringifyDebugValue(stagehand.actions)}</pre>
                             </details>
@@ -288,10 +288,10 @@ export function TrackingSurface({
                               </div>
                             </div>
                           ) : null}
-                          {anchor?.raw !== undefined ? <details open><summary>Latest Anchor payload</summary><pre className="tracking-pre">{stringifyDebugValue(anchor.raw)}</pre></details> : null}
-                          {browserbase?.raw !== undefined ? <details open><summary>Latest Browserbase payload</summary><pre className="tracking-pre">{stringifyDebugValue(browserbase.raw)}</pre></details> : null}
-                          {stagehand?.ai?.length ? <details open><summary>Stagehand AI notes</summary><pre className="tracking-pre">{stringifyDebugValue(stagehand.ai)}</pre></details> : null}
-                          {stagehand?.raw !== undefined ? <details open><summary>Latest Stagehand payload</summary><pre className="tracking-pre">{stringifyDebugValue(stagehand.raw)}</pre></details> : null}
+                          {anchor?.raw !== undefined ? <details><summary>Latest Anchor payload</summary><pre className="tracking-pre">{stringifyDebugValue(anchor.raw)}</pre></details> : null}
+                          {browserbase?.raw !== undefined ? <details><summary>Latest Browserbase payload</summary><pre className="tracking-pre">{stringifyDebugValue(browserbase.raw)}</pre></details> : null}
+                          {stagehand?.ai?.length ? <details><summary>Stagehand AI notes</summary><pre className="tracking-pre">{stringifyDebugValue(stagehand.ai)}</pre></details> : null}
+                          {stagehand?.raw !== undefined ? <details><summary>Latest Stagehand payload</summary><pre className="tracking-pre">{stringifyDebugValue(stagehand.raw)}</pre></details> : null}
                         </div>
                       );
                     })()}

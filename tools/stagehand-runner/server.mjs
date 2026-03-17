@@ -476,13 +476,19 @@ async function collectFormDiagnostics(page) {
       .filter(Boolean)
       .slice(0, 6);
 
-    const bodyText = textOf(document.body).slice(0, 2000);
+    const bodyText = textOf(document.body).slice(0, 6000);
+    const submitButtons = Array.from(document.querySelectorAll('button, input[type="submit"]'))
+      .filter((element) => visible(element))
+      .map((element) => {
+        const text = textOf(element);
+        const disabled = element instanceof HTMLButtonElement || element instanceof HTMLInputElement ? element.disabled : false;
+        return { text, disabled };
+      })
+      .filter((element) => /submit|send|apply/i.test(element.text));
     const hasInputs = document.querySelectorAll('input, textarea, select').length > 0;
-    const hasSubmitButton = Array.from(document.querySelectorAll('button, input[type="submit"]')).some((element) => {
-      if (!visible(element)) return false;
-      const text = textOf(element);
-      return /submit|send|apply/i.test(text) || (element instanceof HTMLInputElement && /submit/i.test(element.type || ''));
-    });
+    const hasSubmitButton = submitButtons.length > 0;
+    const hasEnabledSubmitButton = submitButtons.some((element) => !element.disabled);
+    const hasDisabledSubmitButton = submitButtons.some((element) => element.disabled);
 
     return {
       url: window.location.href,
@@ -491,9 +497,159 @@ async function collectFormDiagnostics(page) {
       errors,
       successTexts,
       hasInputs,
-      hasSubmitButton
+      hasSubmitButton,
+      hasEnabledSubmitButton,
+      hasDisabledSubmitButton,
+      submitButtons: submitButtons.slice(0, 4)
     };
   });
+}
+
+function createRecentResponseRecorder(context, currentUrl) {
+  const records = [];
+  const pending = new Set();
+  const originHost = (() => {
+    try {
+      return new URL(currentUrl).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+
+  const isInteresting = (response) => {
+    const request = response.request();
+    const method = request.method().toUpperCase();
+    const resourceType = request.resourceType();
+    const url = response.url();
+    let hostname = '';
+    try {
+      hostname = new URL(url).hostname.toLowerCase();
+    } catch {
+      hostname = '';
+    }
+
+    if (/google-analytics|googletagmanager|segment|sentry|hotjar|facebook|doubleclick|bam\.nr-data/i.test(url)) return false;
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) return true;
+    if (resourceType === 'document') return true;
+    if (!['xhr', 'fetch'].includes(resourceType)) return false;
+    if (hostname && originHost && hostname === originHost) return true;
+    return /comeet|sparkhire|apply|candidate|application|job/i.test(url);
+  };
+
+  const readBodySnippet = async (response, contentType) => {
+    if (!/json|text|html/i.test(contentType)) return '';
+    try {
+      return (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 1200);
+    } catch {
+      return '';
+    }
+  };
+
+  const handler = (response) => {
+    if (!isInteresting(response)) return;
+
+    const job = (async () => {
+      const request = response.request();
+      const headers = response.headers();
+      const contentType = headers['content-type'] || '';
+      records.push({
+        timestamp: Date.now(),
+        url: response.url(),
+        method: request.method().toUpperCase(),
+        resourceType: request.resourceType(),
+        status: response.status(),
+        ok: response.ok(),
+        contentType,
+        bodySnippet: await readBodySnippet(response, contentType)
+      });
+      if (records.length > 40) records.shift();
+    })();
+
+    pending.add(job);
+    job.finally(() => pending.delete(job));
+  };
+
+  context.on('response', handler);
+
+  return {
+    async stop({ since = 0 } = {}) {
+      context.off('response', handler);
+      await Promise.allSettled(Array.from(pending));
+      return records.filter((record) => record.timestamp >= since);
+    }
+  };
+}
+
+function isComeetSubmitEndpoint(url) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname.toLowerCase();
+    if (!/comeet\.co$/.test(hostname)) return false;
+    return /\/careers-api\/.+\/apply$/.test(pathname) || /\/jobs\/.+\/apply$/.test(pathname);
+  } catch {
+    return false;
+  }
+}
+
+async function waitForComeetSubmitResponse(page) {
+  try {
+    const response = await page.waitForResponse((candidate) => {
+      const method = candidate.request().method().toUpperCase();
+      const url = candidate.url();
+      if (!['POST', 'PUT', 'PATCH'].includes(method)) return false;
+      return isComeetSubmitEndpoint(url);
+    }, { timeout: 12000 });
+
+    const headers = response.headers();
+    const contentType = headers['content-type'] || '';
+    let bodySnippet = '';
+    try {
+      if (/json|text|html/i.test(contentType)) {
+        bodySnippet = (await response.text()).replace(/\s+/g, ' ').trim().slice(0, 1200);
+      }
+    } catch {
+      bodySnippet = '';
+    }
+
+    return {
+      ok: response.ok(),
+      status: response.status(),
+      url: response.url(),
+      method: response.request().method(),
+      resourceType: response.request().resourceType(),
+      contentType,
+      bodySnippet
+    };
+  } catch {
+    return null;
+  }
+}
+
+function responseLooksLikeSuccessfulSubmission(record) {
+  if (!record) return false;
+  if (!isComeetSubmitEndpoint(record.url || '')) return false;
+  if (Number(record.status || 0) >= 400) return false;
+  if (!['POST', 'PUT', 'PATCH'].includes(String(record.method || '').toUpperCase())) return false;
+
+  const text = normalizeWhitespace(`${record.url || ''} ${record.contentType || ''} ${record.bodySnippet || ''}`).toLowerCase();
+  if (!text) return false;
+  if (/error|invalid|required field|must be completed|captcha|human check|verify you are human|forbidden|unauthorized/.test(text)) {
+    return false;
+  }
+
+  return /apply|application|candidate|submit|sparkhire|comeet|success|thank/.test(text) || record.method !== 'GET';
+}
+
+function diagnosticsLookLikeSuccessfulSubmission(diagnostics) {
+  const text = normalizeWhitespace(
+    `${diagnostics?.title || ''} ${diagnostics?.bodyText || ''} ${(diagnostics?.successTexts || []).join(' ')} ${diagnostics?.url || ''}`
+  ).toLowerCase();
+
+  return (
+    /thank you|submitted|received your application|application received|successfully submitted|application has been submitted/.test(text) ||
+    (diagnostics?.hasDisabledSubmitButton && !diagnostics?.errors?.length && !diagnostics?.hasEnabledSubmitButton)
+  );
 }
 
 function normalizeBlockingMessage(message) {
@@ -1153,18 +1309,25 @@ async function runComeet(input) {
     if (HEADFUL_PAUSE_BEFORE_SUBMIT_MS > 0) {
       await page.waitForTimeout(HEADFUL_PAUSE_BEFORE_SUBMIT_MS).catch(() => {});
     }
+    const submitStartedAt = Date.now();
+    const responseRecorder = createRecentResponseRecorder(page.context(), page.url());
+    const submitResponsePromise = waitForComeetSubmitResponse(page);
     await submitButton.click();
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(1500);
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+    await page.waitForTimeout(5000);
+    const submitResponse = await submitResponsePromise;
+    const recentResponses = await responseRecorder.stop({ since: submitStartedAt - 250 });
 
     const diagnostics = await collectFormDiagnostics(formScope);
+    const submitResponseLooksSuccessful = responseLooksLikeSuccessfulSubmission(submitResponse);
+    const networkLooksSuccessful = recentResponses.some(responseLooksLikeSuccessfulSubmission);
     const submitted =
       (await formScope.locator('text=/application submitted|thank you|received your application|we have received/i').count().catch(() => 0)) > 0 ||
       (await page.locator('text=/application submitted|thank you|received your application|we have received/i').count().catch(() => 0)) > 0 ||
       /thank you|submitted/i.test(await page.title()) ||
-      /thank you|submitted|received your application|application received|successfully submitted/i.test(
-        `${diagnostics.title} ${diagnostics.bodyText} ${diagnostics.successTexts.join(' ')} ${diagnostics.url}`
-      ) ||
+      diagnosticsLookLikeSuccessfulSubmission(diagnostics) ||
+      submitResponseLooksSuccessful ||
+      networkLooksSuccessful ||
       (!diagnostics.hasSubmitButton &&
         !diagnostics.hasInputs &&
         /thank you|submitted|received your application|application received/i.test(
@@ -1173,6 +1336,8 @@ async function runComeet(input) {
 
     debug.raw.entryState = entryState;
     debug.raw.diagnostics = diagnostics;
+    debug.raw.submitResponse = submitResponse;
+    debug.raw.recentResponses = recentResponses;
     debug.finalUrl = page.url();
 
     if (!submitted) {

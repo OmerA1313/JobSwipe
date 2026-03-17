@@ -144,4 +144,37 @@ describe("automation debug serialization", () => {
       )
     ).toBe(true);
   });
+
+  it("prefers an explicit null blocker from the latest event over an older blocker", () => {
+    const events = [
+      createEvent(2, "stagehand-submitted", {
+        stagehand: {
+          provider: "stagehand-local",
+          blocker: null,
+          raw: {
+            submitResponse: {
+              ok: true,
+              status: 200
+            }
+          }
+        }
+      }),
+      createEvent(1, "stagehand-older-blocker", {
+        stagehand: {
+          provider: "stagehand-local",
+          blocker: {
+            category: "submit_unconfirmed",
+            detail: "Could not confirm Comeet submission",
+            manualAttention: false,
+            disagreement: false
+          }
+        }
+      })
+    ];
+
+    const debug = buildAutomationDebug(events as never);
+
+    expect(debug.stagehand?.blocker).toBeNull();
+    expect(extractNormalizedBlocker(events as never)).toBeNull();
+  });
 });
