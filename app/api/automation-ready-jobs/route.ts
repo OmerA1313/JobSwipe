@@ -29,7 +29,7 @@ export async function GET() {
     });
 
     const readyJobs = jobs
-      .filter((job) => {
+      .filter((job: (typeof jobs)[number]) => {
         if (job.application) return false;
         const decision = job.decisions[0];
         if (decision && ["SKIP", "NOT_FIT", "APPLIED"].includes(decision.decision)) return false;
@@ -38,7 +38,7 @@ export async function GET() {
         const siteType = detectAutomationSite(job);
         return isAutoApplyEnabledSite(siteType);
       })
-      .map((job) => {
+      .map((job: (typeof jobs)[number]) => {
         const latestRun = job.automationRuns[0];
         const siteType = detectAutomationSite(job);
         const support = getAutomationSiteSupport(siteType);
@@ -53,11 +53,11 @@ export async function GET() {
           supportStatus: support.supportStatus,
           autoApplyEnabled: support.autoApplyEnabled,
           supportLabel: support.label,
-          activeSupportCohorts: job.automationSupportCases.map((item) => item.cohort),
+          activeSupportCohorts: job.automationSupportCases.map((item: { cohort: string }) => item.cohort),
           latestRunStatus: latestRun?.status ?? null
         };
       })
-      .sort((left, right) => {
+      .sort((left: { location: string; activeSupportCohorts: string[]; siteType: string }, right: { location: string; activeSupportCohorts: string[]; siteType: string }) => {
         const leftIsrael = /israel/i.test(left.location) ? 1 : 0;
         const rightIsrael = /israel/i.test(right.location) ? 1 : 0;
         if (leftIsrael !== rightIsrael) return rightIsrael - leftIsrael;

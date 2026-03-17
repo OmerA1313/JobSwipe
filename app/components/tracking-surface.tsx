@@ -72,7 +72,7 @@ export function TrackingSurface({
                         </button>
                       </div>
                     </div>
-                  ) : run.blockingQuestion ? (
+                  ) : run.blockingQuestion && run.blockerCategory === "missing_answer" ? (
                     <div className="tracking-run-stack">
                       <strong>Needs input{run.blockerCategory ? ` · ${run.blockerCategory}` : ""}</strong>
                       <span>{run.blockerDetail ?? run.blockingQuestion}</span>
@@ -85,6 +85,16 @@ export function TrackingSurface({
                         />
                         <button type="button" onClick={() => onSubmitRunAnswer(run)} disabled={answeringRunId === run.id || !(runAnswerDrafts[run.id] ?? "").trim()}>
                           {answeringRunId === run.id ? "Saving..." : "Save answer"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : run.blockingQuestion ? (
+                    <div className="tracking-run-stack">
+                      <strong>Blocked{run.blockerCategory ? ` · ${run.blockerCategory}` : ""}</strong>
+                      <span>{run.blockerDetail ?? run.blockingQuestion}</span>
+                      <div className="tracking-inline-actions">
+                        <button type="button" onClick={() => onPerformRunAction(run, "retry")} disabled={actingRunId === run.id}>
+                          {actingRunId === run.id ? "Please wait..." : "Retry automation"}
                         </button>
                       </div>
                     </div>

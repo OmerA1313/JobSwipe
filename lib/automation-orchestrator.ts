@@ -1,13 +1,16 @@
 import { Buffer } from "node:buffer";
 
-import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "@prisma/client";
+import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "../node_modules/.prisma/client";
 
 import {
   buildAutomationDebug,
+  extractNormalizedBlocker,
   parseAutomationAnswers,
   parseEventPayload,
   serializeAutomationEvent
 } from "@/lib/automation-debug";
+import { type AutomationSiteType } from "@/lib/automation-sites";
+import { getMergedAutomationAnswers, updateAutomationSupportCaseOutcome } from "@/lib/automation-state";
 import { prisma } from "@/lib/prisma";
 
 export type AutomationOrchestratorMode = "local" | "n8n";
@@ -183,6 +186,7 @@ export async function dispatchAutomationRun(runId: number, reason?: string) {
   const profile = await prisma.userProfile.findUniqueOrThrow({ where: { id: 1 } });
   const appBaseUrl = getAppBaseUrl();
   const secret = getAutomationSharedSecret();
+  const mergedAnswers = await getMergedAutomationAnswers(run.siteType as AutomationSiteType, parseAutomationAnswers(run));
 
   const dispatchPayload = {
     reason: reason || "queued",
@@ -199,7 +203,7 @@ export async function dispatchAutomationRun(runId: number, reason?: string) {
       siteType: run.siteType,
       status: run.status,
       currentStep: run.currentStep,
-      answers: parseAutomationAnswers(run)
+      answers: mergedAnswers
     },
     job: {
       id: run.job.id,
@@ -268,10 +272,17 @@ export async function getAutomationRunContext(runId: number) {
     return null;
   }
 
+  const mergedAnswers = await getMergedAutomationAnswers(run.siteType as AutomationSiteType, parseAutomationAnswers(run));
+  const serializedRun = serializeRun(run);
+
   return {
     appBaseUrl: getAppBaseUrl(),
     orchestratorMode: getAutomationOrchestratorMode(),
-    run: serializeRun(run),
+    run: {
+      ...serializedRun,
+      answers: mergedAnswers
+    },
+    answerMemory: mergedAnswers,
     profile: {
       id: profile.id,
       fullName: profile.fullName,
@@ -335,6 +346,14 @@ export async function applyAutomationRunCallback(runId: number, input: Automatio
   if (!refreshed) {
     return { ok: false as const, status: 404, message: "Automation run not found after update" };
   }
+
+  const blocker = extractNormalizedBlocker(refreshed.events);
+  await updateAutomationSupportCaseOutcome(refreshed.siteType as AutomationSiteType, refreshed.job, {
+    status: refreshed.status,
+    blockerCategory: blocker?.category ?? null,
+    blockerDetail: blocker?.detail ?? refreshed.blockingQuestion ?? refreshed.lastError ?? null,
+    currentStep: refreshed.currentStep
+  });
 
   return { ok: true as const, run: serializeRun(refreshed) };
 }

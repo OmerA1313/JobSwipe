@@ -34,7 +34,7 @@ export async function GET(req: Request) {
       })
     ]);
 
-    const pending = jobs.filter((job) => {
+    const pending = jobs.filter((job: (typeof jobs)[number]) => {
       if (job.application) return false;
       const latestAutomationRun = job.automationRuns[0];
       if (
@@ -65,7 +65,7 @@ export async function GET(req: Request) {
       : rankedAll;
 
     const feedJobs = ranked.map((job) => {
-      const sourceJob = pending.find((item) => item.id === job.id);
+      const sourceJob = pending.find((item: (typeof pending)[number]) => item.id === job.id);
       const siteType = detectAutomationSite(sourceJob ?? job);
       const support = getAutomationSiteSupport(siteType);
       return {
@@ -74,7 +74,7 @@ export async function GET(req: Request) {
         supportStatus: support.supportStatus,
         autoApplyEnabled: support.autoApplyEnabled,
         supportLabel: support.label,
-        activeSupportCohorts: sourceJob?.automationSupportCases.map((item) => item.cohort) ?? []
+        activeSupportCohorts: sourceJob?.automationSupportCases.map((item: { cohort: string }) => item.cohort) ?? []
       };
     });
 

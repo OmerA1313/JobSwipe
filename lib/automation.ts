@@ -1,4 +1,4 @@
-import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "@prisma/client";
+import type { AutomationEvent, AutomationRun, JobPosting, UserProfile } from "../node_modules/.prisma/client";
 
 import {
   buildAutomationDebug,
@@ -16,6 +16,11 @@ import {
   isAutoApplyEnabledSite,
   type AutomationSiteType
 } from "@/lib/automation-sites";
+import {
+  ensureAutomationSupportCase,
+  persistReusableAnswer,
+  updateAutomationSupportCaseOutcome
+} from "@/lib/automation-state";
 import { dispatchAutomationRun } from "@/lib/automation-orchestrator";
 import { prisma } from "@/lib/prisma";
 
@@ -222,6 +227,7 @@ export async function enqueueAutomationRun(jobId: number) {
   });
 
   await appendAutomationEvent(run.id, `Queued ${siteType.toLowerCase()} automation run`);
+  await ensureAutomationSupportCase(run.job, siteType);
 
   const hydrated = await prisma.automationRun.findUniqueOrThrow({
     where: { id: run.id },
@@ -262,6 +268,15 @@ export async function answerAutomationRun(runId: number, answer: string) {
     return { ok: false as const, status: 409, message: "This run is not waiting for input" };
   }
 
+  const blocker = extractNormalizedBlocker(run.events);
+  if (deriveManualAttention(run, run.events)) {
+    return { ok: false as const, status: 409, message: "This run needs manual attention, not a reusable answer" };
+  }
+
+  if (blocker?.category && blocker.category !== "missing_answer") {
+    return { ok: false as const, status: 409, message: "Only job-relevant missing-answer blockers can be answered here" };
+  }
+
   const normalizedAnswer = answer.trim();
   if (!normalizedAnswer) {
     return { ok: false as const, status: 400, message: "Answer cannot be empty" };
@@ -275,6 +290,7 @@ export async function answerAutomationRun(runId: number, answer: string) {
   }
 
   answers[run.blockingQuestion] = normalizedAnswer;
+  await persistReusableAnswer(run.siteType as AutomationSiteType, run.blockingQuestion, normalizedAnswer, blocker?.category ?? "missing_answer");
 
   await prisma.automationRun.update({
     where: { id: runId },
@@ -305,6 +321,13 @@ export async function answerAutomationRun(runId: number, answer: string) {
         take: 10
       }
     }
+  });
+
+  await updateAutomationSupportCaseOutcome(refreshed.siteType as AutomationSiteType, refreshed.job, {
+    status: refreshed.status,
+    blockerCategory: extractNormalizedBlocker(refreshed.events)?.category ?? null,
+    blockerDetail: extractNormalizedBlocker(refreshed.events)?.detail ?? refreshed.blockingQuestion ?? refreshed.lastError ?? null,
+    currentStep: refreshed.currentStep
   });
 
   return {

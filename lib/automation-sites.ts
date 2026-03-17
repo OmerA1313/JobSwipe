@@ -66,6 +66,10 @@ export function getAutomationSiteSupport(siteType: AutomationSiteType): Automati
   return SUPPORT_MATRIX[siteType];
 }
 
+export function getAutomationSupportCohort(siteType: AutomationSiteType) {
+  return getAutomationSiteSupport(siteType).cohort;
+}
+
 export function listAutomationSiteSupport() {
   return [
     getAutomationSiteSupport("COMEET"),

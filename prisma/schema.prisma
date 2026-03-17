@@ -134,3 +134,19 @@ model AutomationSupportCase {
   @@unique([cohort, jobId])
   @@index([siteType, cohort, active])
 }
+
+model AutomationAnswerMemory {
+  id          Int      @id @default(autoincrement())
+  siteType    String
+  questionKey String
+  questionText String
+  answerText  String
+  category    String   @default("missing_answer")
+  safeToReuse Boolean  @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([siteType, questionKey])
+  @@index([siteType, safeToReuse, updatedAt])
+}
