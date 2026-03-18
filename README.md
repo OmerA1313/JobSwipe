@@ -25,6 +25,12 @@ docker compose logs -f ollama-init
 
 When that exits successfully, the stack is ready.
 
+Then run the smoke test:
+
+```bash
+npm run stack:smoke
+```
+
 ### URLs
 
 - App: `http://localhost:3001`
@@ -32,15 +38,14 @@ When that exits successfully, the stack is ready.
 - Ollama: `http://localhost:11435`
 - Stagehand runner health: `http://localhost:8788/health`
 
-## First-time n8n setup
+## n8n bootstrap
 
-The stack starts `n8n`, but you still need to import and activate the workflow once.
+The Docker stack bootstraps `n8n` automatically:
 
-1. Open `http://localhost:5679`
-2. Import `n8n/job-apply-stagehand-orchestrator.workflow.json`
-3. Save and activate `Job Apply Stagehand Orchestrator`
+- imports `n8n/job-apply-stagehand-orchestrator.workflow.json`
+- publishes the workflow on startup
 
-The workflow is already wired for the Docker service names:
+The workflow is wired for the Docker service names:
 
 - app callback/context: `http://app:3000`
 - Stagehand runner: `http://stagehand:8787/run`
@@ -69,7 +74,7 @@ ADZUNA_APP_KEY=
 ## Stop the stack
 
 ```bash
-docker compose down
+npm run stack:down
 ```
 
 To also remove persisted data:
