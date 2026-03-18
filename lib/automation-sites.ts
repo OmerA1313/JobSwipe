@@ -56,6 +56,7 @@ export function detectAutomationSite(job: { url?: string | null; source?: string
 
   if (url.includes("jobs.lever.co")) return "LEVER";
   if (url.includes("comeet.com/jobs/")) return "COMEET";
+  if (url.includes("/mock-ats/comeet/")) return "COMEET";
   if (url.includes("linkedin.com/jobs/view") || url.includes("linkedin.com/jobs/collections")) return "LINKEDIN";
   if (url.includes("greenhouse") || url.includes("gh_jid=") || source === "greenhouse") return "GREENHOUSE";
   return "UNSUPPORTED";

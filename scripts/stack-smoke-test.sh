@@ -4,6 +4,7 @@ set -euo pipefail
 APP_URL="${APP_URL:-http://127.0.0.1:3001}"
 N8N_URL="${N8N_URL:-http://127.0.0.1:5679}"
 OLLAMA_URL="${OLLAMA_URL:-http://127.0.0.1:11435}"
+MAILPIT_URL="${MAILPIT_URL:-http://127.0.0.1:8026}"
 WORKFLOW_ID="${N8N_WORKFLOW_ID:-jobApplyStagehand01}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen2.5:7b}"
 
@@ -11,6 +12,7 @@ echo "Checking Docker stack endpoints..."
 curl -fsS -I "$APP_URL" >/dev/null
 curl -fsS -I "$N8N_URL" >/dev/null
 curl -fsS "$OLLAMA_URL/api/tags" >/dev/null
+curl -fsS "$MAILPIT_URL/api/v1/messages" >/dev/null
 
 echo "Checking container state..."
 docker compose ps

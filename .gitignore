@@ -11,3 +11,5 @@ prisma/prisma/dev.db-journal
 tsconfig.tsbuildinfo
 tools/stagehand-runner/node_modules
 tools/stagehand-runner/.tmp-*.mjs
+playwright-report
+test-results

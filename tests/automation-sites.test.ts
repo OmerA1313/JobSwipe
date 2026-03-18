@@ -10,6 +10,7 @@ import {
 describe("automation site support", () => {
   it("detects known ATS families from job URLs", () => {
     expect(detectAutomationSite({ url: "https://www.comeet.com/jobs/acme/123" })).toBe("COMEET");
+    expect(detectAutomationSite({ url: "/mock-ats/comeet/e2e-backend-engineer" })).toBe("COMEET");
     expect(detectAutomationSite({ url: "https://jobs.lever.co/acme/123" })).toBe("LEVER");
     expect(detectAutomationSite({ url: "https://boards.greenhouse.io/acme/jobs/123" })).toBe("GREENHOUSE");
     expect(detectAutomationSite({ url: "https://linkedin.com/jobs/view/123" })).toBe("LINKEDIN");

@@ -93,7 +93,7 @@ export function FeedSurface({
           <button onClick={onResetQueue} disabled={isResettingQueue}>{isResettingQueue ? "Resetting..." : "Reset cards"}</button>
           <label className="feed-filter">
             <span className="small">Source</span>
-            <select value={sourceFilter} onChange={(event) => onSourceFilterChange(event.target.value)}>
+            <select data-testid="feed-source-filter" value={sourceFilter} onChange={(event) => onSourceFilterChange(event.target.value)}>
               <option value="all">All sources</option>
               {availableSources.map((source) => (
                 <option key={source} value={source}>{source}</option>
@@ -102,7 +102,7 @@ export function FeedSurface({
           </label>
           <label className="feed-filter">
             <span className="small">Scope</span>
-            <select value={supportedOnly ? "supported" : "all"} onChange={(event) => onSupportedOnlyChange(event.target.value === "supported")}>
+            <select data-testid="feed-scope-filter" value={supportedOnly ? "supported" : "all"} onChange={(event) => onSupportedOnlyChange(event.target.value === "supported")}>
               <option value="supported">Supported ATS only</option>
               <option value="all">All discovery</option>
             </select>
@@ -183,7 +183,7 @@ export function FeedSurface({
                 {topJob.passSignals?.location ? <span className="pass-tag">Location: {topJob.passSignals.location}</span> : null}
                 {topJob.passSignals?.remote ? <span className="pass-tag">Mode: {topJob.passSignals.remote}</span> : null}
               </div>
-              <h2>{topJob.title}</h2>
+              <h2 data-testid="feed-top-job-title">{topJob.title}</h2>
               <p className="job-subline">{topJob.company} • {topJob.location}</p>
               <div className="job-brief">
                 <h3>Description</h3>
@@ -202,6 +202,7 @@ export function FeedSurface({
                 <button onClick={() => onSwipe("down")} disabled={isSubmittingSwipe}>Skip</button>
                 <button
                   className="primary"
+                  data-testid="feed-apply-button"
                   onClick={() => onSwipe("right")}
                   disabled={isSubmittingSwipe || !topJob.autoApplyEnabled}
                 >

@@ -57,7 +57,7 @@ export function TrackingSurface({
   stringifyDebugValue: (value: unknown) => string;
 }) {
   return (
-    <section className="card tracking-surface">
+    <section className="card tracking-surface" data-testid="tracking-surface">
       <div className="tracking-surface-head">
         <div>
           <h2>Apply Progress</h2>
@@ -77,7 +77,7 @@ export function TrackingSurface({
         <tbody>
           {automationRuns.map((run) => (
             <Fragment key={run.id}>
-              <tr>
+              <tr data-testid={`tracking-run-${run.id}`}>
                 <td>{run.job.title}</td>
                 <td>{run.siteType}</td>
                 <td><StatusChip status={run.requiresManualAttention ? "Manual attention" : run.status} /></td>

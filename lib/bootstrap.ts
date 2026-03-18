@@ -63,6 +63,19 @@ const mockJobs = [
   }
 ];
 
+const mockComeetE2EJob = {
+  externalId: "mock-comeet-e2e",
+  title: "Mock Comeet E2E Backend Engineer",
+  company: "JobSwipe ATS Lab",
+  location: "Tel Aviv, Israel",
+  isRemote: true,
+  salaryMin: 95000,
+  salaryMax: 125000,
+  url: "/mock-ats/comeet/e2e-backend-engineer",
+  summary: "Deterministic mock Comeet job used for end-to-end automation and mailbox verification.",
+  source: "mock-e2e"
+};
+
 export async function ensureBootstrap() {
   const [profile, jobCount] = await Promise.all([
     prisma.userProfile.findUnique({ where: { id: 1 } }),
@@ -83,4 +96,10 @@ export async function ensureBootstrap() {
       data: mockJobs
     });
   }
+
+  await prisma.jobPosting.upsert({
+    where: { externalId: mockComeetE2EJob.externalId },
+    create: mockComeetE2EJob,
+    update: mockComeetE2EJob
+  });
 }

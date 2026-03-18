@@ -34,6 +34,10 @@ const MANUAL_ATTENTION_CATEGORIES = new Set(['human_check', 'login_required', 'f
 const LIVE_PREVIEW_MAX_AGE_MS = Number(process.env.STAGEHAND_LIVE_PREVIEW_MAX_AGE_MS || 10 * 60 * 1000);
 const livePreviewRuns = new Map();
 
+if (!process.env.CHROME_PATH) {
+  process.env.CHROME_PATH = PLAYWRIGHT_EXECUTABLE_PATH || chromium.executablePath();
+}
+
 function jsonResponse(res, status, payload) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
@@ -585,10 +589,25 @@ function isComeetSubmitEndpoint(url) {
     const parsed = new URL(url);
     const hostname = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname.toLowerCase();
+    if (/\/mock-ats\/comeet\/careers-api\/.+\/apply$/.test(pathname)) return true;
     if (!/comeet\.co$/.test(hostname)) return false;
     return /\/careers-api\/.+\/apply$/.test(pathname) || /\/jobs\/.+\/apply$/.test(pathname);
   } catch {
     return false;
+  }
+}
+
+function resolveJobUrl(jobUrl, appBaseUrl) {
+  const raw = String(jobUrl || '').trim();
+  if (!raw) return '';
+  try {
+    return new URL(raw).toString();
+  } catch {
+    if (raw.startsWith('/')) {
+      const base = firstNonEmpty(appBaseUrl, process.env.APP_BASE_URL, 'http://127.0.0.1:3000');
+      return new URL(raw, base).toString();
+    }
+    return raw;
   }
 }
 
@@ -990,8 +1009,171 @@ function splitFullName(fullName) {
   };
 }
 
+function isMockComeetUrl(url) {
+  return /\/mock-ats\/comeet\//i.test(String(url || ''));
+}
+
+async function createLocalPlaywrightContext(profileDir) {
+  const launchOptions = {
+    headless: PLAYWRIGHT_HEADLESS,
+    slowMo: PLAYWRIGHT_SLOW_MO_MS,
+    executablePath: PLAYWRIGHT_EXECUTABLE_PATH || process.env.CHROME_PATH || undefined,
+    args: ['--new-window', '--start-maximized']
+  };
+  return chromium.launchPersistentContext(profileDir, launchOptions);
+}
+
+async function runMockComeet(input) {
+  const job = input?.run?.job || input?.job || {};
+  const browserAppBaseUrl = process.env.STAGEHAND_BROWSER_APP_BASE_URL || input?.app?.baseUrl;
+  const resolvedJobUrl = resolveJobUrl(job.url, browserAppBaseUrl);
+  const profile = input?.profile || {};
+  const runId = Number(input?.run?.id);
+  const debug = {
+    provider: 'playwright-mock',
+    model: 'mock-comeet-e2e',
+    baseUrl: input?.app?.baseUrl || '',
+    headless: PLAYWRIGHT_HEADLESS,
+    answersUsed: {},
+    blocker: null,
+    actions: [],
+    ai: [],
+    finalUrl: resolvedJobUrl || job.url || '',
+    raw: {},
+    snapshots: []
+  };
+
+  let context;
+  let page;
+  let formScope = null;
+  let tempDir = null;
+  let profileDir = null;
+  let livePreview = null;
+  let liveScope = null;
+  let liveLabel = 'booting';
+
+  try {
+    clearExpiredLivePreviews();
+    profileDir = await createBrowserProfileDir();
+    context = await createLocalPlaywrightContext(profileDir);
+    page = context.pages()[0] || (await context.newPage());
+    liveScope = page;
+    livePreview = startLivePreview(runId, () => liveScope || page, () => liveLabel);
+    markLivePreviewStatus(runId, 'running', { runId, finalUrl: resolvedJobUrl });
+
+    await page.goto(resolvedJobUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    debug.finalUrl = page.url();
+
+    const clickResult = await clickBestApplyEntry(page, 'Apply for this job', debug);
+    if (!clickResult.clicked) {
+      await captureTerminalSnapshot(page, debug, 'missing-apply-entry');
+      return createFailed('form_not_reached', 'Could not open the mock Comeet application form.', debug);
+    }
+
+    formScope = await getComeetFormScope(page).catch(() => page);
+    liveScope = formScope;
+    liveLabel = 'form-opened';
+    await scrollComeetFormIntoView(page);
+    await captureScopedSnapshot(formScope, debug, 'form-opened');
+
+    const resumeFile = await writeResumeTempFile(profile);
+    tempDir = resumeFile?.tempDir || null;
+    const { firstName, lastName, fullName } = splitFullName(profile.fullName || '');
+
+    const fillResultFirstName = await fillFirstVisible(formScope, ['input[name*="first" i]', 'input[autocomplete="given-name"]'], firstName);
+    const fillResultLastName = await fillFirstVisible(formScope, ['input[name*="last" i]', 'input[autocomplete="family-name"]'], lastName);
+    const fillResultFullName = await fillFirstVisible(formScope, ['input[name="name"]', 'input[autocomplete="name"]'], fullName);
+    const fillResultEmail = await fillFirstVisible(formScope, ['input[name*="email" i]', 'input[type="email"]'], profile.email || '');
+    const fillResultPhone = await fillFirstVisible(formScope, ['input[name*="phone" i]', 'input[type="tel"]'], profile.phone || '');
+    const fillResultLocation = await fillFirstVisible(
+      formScope,
+      ['input[name*="location" i]', 'input[aria-label*="location" i]', 'input[name*="city" i]'],
+      firstPreferredLocation(profile)
+    );
+
+    debug.actions.push({
+      type: 'fill',
+      target: 'mock_contact_fields',
+      fields: {
+        firstName: fillResultFirstName,
+        lastName: fillResultLastName,
+        fullName: fillResultFullName,
+        email: fillResultEmail,
+        phone: fillResultPhone,
+        location: fillResultLocation
+      }
+    });
+    liveLabel = 'contact-fields-filled';
+    await captureScopedSnapshot(formScope, debug, 'contact-fields-filled');
+
+    if (!resumeFile?.filePath) {
+      await captureTerminalSnapshot(page, debug, 'missing-resume', formScope);
+      return createNeedsInput('resume_upload', 'A PDF resume is required before automation can continue.', 'resume_upload', debug);
+    }
+
+    const uploadResult = await uploadFirstFile(formScope, resumeFile.filePath);
+    debug.actions.push({ type: 'upload', target: resumeFile.fileName, result: uploadResult });
+    if (!uploadResult.uploaded) {
+      await captureTerminalSnapshot(page, debug, 'resume-upload-blocked', formScope);
+      return createNeedsInput('resume_upload', 'The mock Comeet form requires a resume upload that could not be completed automatically.', 'resume_upload', debug);
+    }
+
+    liveLabel = 'resume-uploaded';
+    await captureScopedSnapshot(formScope, debug, 'resume-uploaded');
+
+    const submitButton = formScope.locator('button[type="submit"], input[type="submit"], button:has-text("Submit")').first();
+    if ((await submitButton.count()) === 0) {
+      await captureTerminalSnapshot(page, debug, 'missing-submit-button', formScope);
+      return createFailed('unsupported_flow', 'The mock Comeet form did not expose a submit button.', debug);
+    }
+
+    const responseRecorder = createRecentResponseRecorder(page.context(), page.url());
+    const submitResponsePromise = waitForComeetSubmitResponse(page);
+    liveLabel = 'submitting';
+    await submitButton.click();
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1000);
+    const submitResponse = await submitResponsePromise;
+    const recentResponses = await responseRecorder.stop({ since: Date.now() - 10000 });
+    const diagnostics = await collectFormDiagnostics(formScope);
+    debug.raw.submitResponse = submitResponse;
+    debug.raw.recentResponses = recentResponses;
+    debug.raw.diagnostics = diagnostics;
+    debug.finalUrl = page.url();
+
+    const submitted =
+      responseLooksLikeSuccessfulSubmission(submitResponse) ||
+      recentResponses.some(responseLooksLikeSuccessfulSubmission) ||
+      diagnosticsLookLikeSuccessfulSubmission(diagnostics);
+
+    if (!submitted) {
+      await captureTerminalSnapshot(page, debug, 'submission-unconfirmed', formScope);
+      return createFailed('submit_unconfirmed', 'Could not confirm mock Comeet submission.', debug, { diagnostics });
+    }
+
+    await captureTerminalSnapshot(page, debug, 'submitted', formScope);
+    return createSubmitted('Application submitted successfully.', debug, { diagnostics });
+  } finally {
+    livePreview?.stop(debug.blocker?.category || 'finished');
+    await context?.close().catch(() => {});
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+    if (profileDir) {
+      await fs.rm(profileDir, { recursive: true, force: true }).catch(() => {});
+    }
+    await cleanupRepoProfileArtifacts();
+  }
+}
+
 async function runComeet(input) {
   const job = input?.run?.job || input?.job || {};
+  const browserAppBaseUrl = process.env.STAGEHAND_BROWSER_APP_BASE_URL || input?.app?.baseUrl;
+  const resolvedJobUrl = resolveJobUrl(job.url, browserAppBaseUrl);
+  if (isMockComeetUrl(resolvedJobUrl)) {
+    return runMockComeet(input);
+  }
   const profile = input?.profile || {};
   const answers = input?.run?.answers || {};
   const runId = Number(input?.run?.id);
@@ -1006,7 +1188,7 @@ async function runComeet(input) {
     blocker: null,
     actions: [],
     ai: [],
-    finalUrl: job.url || '',
+    finalUrl: resolvedJobUrl || job.url || '',
     raw: {},
     snapshots: []
   };
@@ -1025,7 +1207,7 @@ async function runComeet(input) {
     markLivePreviewStatus(runId, 'starting', {
       runId,
       label: liveLabel,
-      finalUrl: job.url || ''
+      finalUrl: resolvedJobUrl || job.url || ''
     });
     await cleanupRepoProfileArtifacts();
     profileDir = await createBrowserProfileDir();
@@ -1066,7 +1248,7 @@ async function runComeet(input) {
       });
     }
 
-    await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(resolvedJobUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
     debug.finalUrl = page.url();
     markLivePreviewStatus(runId, 'running', { finalUrl: debug.finalUrl });
@@ -1403,7 +1585,7 @@ async function runComeet(input) {
 async function runAutomation(input) {
   const siteType = String(input?.run?.siteType || '').toUpperCase();
   const jobUrl = String(input?.run?.job?.url || input?.job?.url || '');
-  const effectiveSiteType = siteType || (/comeet\.com\/jobs\//i.test(jobUrl) ? 'COMEET' : 'UNSUPPORTED');
+  const effectiveSiteType = siteType || (/comeet\.com\/jobs\/|\/mock-ats\/comeet\//i.test(jobUrl) ? 'COMEET' : 'UNSUPPORTED');
 
   if (effectiveSiteType !== 'COMEET') {
     return createFailed('unsupported_flow', `${effectiveSiteType.toLowerCase()} automation is not implemented in the Stagehand runner yet`, {

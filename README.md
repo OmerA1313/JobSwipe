@@ -10,6 +10,7 @@ This repo now includes a Docker Compose stack for:
 - `n8n`
 - `ollama`
 - the headless Stagehand runner
+- `Mailpit` for local mailbox verification
 
 ### Start everything
 
@@ -37,6 +38,7 @@ npm run stack:smoke
 - n8n: `http://localhost:5679`
 - Ollama: `http://localhost:11435`
 - Stagehand runner health: `http://localhost:8788/health`
+- Mailpit UI/API: `http://localhost:8026`
 
 ## n8n bootstrap
 
@@ -57,7 +59,22 @@ The workflow is wired for the Docker service names:
 - The app uses SQLite in the `app_data` Docker volume
 - `n8n` data is persisted in the `n8n_data` Docker volume
 - Ollama models are persisted in the `ollama_data` Docker volume
+- Mailpit captures local ATS confirmation emails for E2E verification
 - This stack is headless. It does not open a visible Chromium window.
+
+## End-to-end sanity test
+
+Once the stack is up, run:
+
+```bash
+npm run test:e2e
+```
+
+That test:
+
+- applies to the seeded mock Comeet job through the real UI
+- waits for the run to reach `SUBMITTED`
+- verifies a confirmation email was captured in Mailpit
 
 ## Optional env overrides
 
